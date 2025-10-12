@@ -1,0 +1,36 @@
+de# Ignore Python caches and build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.onnx
+*.pth
+models/
+models.zip
+build/
+dist/
+.vscode/
+checkpoints/
+dpngtmp/
+logs/
+.cache/
+outputs/
+.onnx
+.pth
+# Ignore virtual environments
+.venv*/
+.suckthis/
+sux/
+/.cock
+/.ai
+/balls
+/.balls
+.balls/
+/node_modules/.bin
+/node_modules
+/node_modules
+/node_modules/sharp/vendor/8.14.5/win32-x64/include
+/node_modules/sharp/vendor/8.14.5/win32-x64/include/orc-0.4/orc
+/node_modules/sharp/vendor/8.14.5/win32-x64/include/orc-0.4/orc
+/node_modules/sharp/vendor/8.14.5/win32-x64/include
+/node_modules
