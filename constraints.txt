@@ -1,0 +1,6 @@
+# diaremot2-ai pins (last known good on Windows CPU)
+ctranslate2==4.4.0
+onnxruntime==1.17.1
+faster-whisper==1.0.3
+# optional/additional pins if you use them:
+# openai-whisper==20231117

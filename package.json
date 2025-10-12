@@ -1,0 +1,17 @@
+{
+  "name": "diaremot2-on",
+  "version": "1.0.0",
+  "description": "**Version 2.2.0**",
+  "main": "index.js",
+  "scripts": {
+    "type": "module",
+    "test": "echo no-tests"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@xenova/transformers": "^2.17.2"
+  }
+}
