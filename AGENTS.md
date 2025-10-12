@@ -1,11 +1,10 @@
-
+This file is for the agent. Execute deterministic instructions exactly as written. If a prerequisite is missing or a contract below would be violated, stop and return a failure report with the minimal relevant logs.
 Agents read AGENTS.md to learn build/test/style rules and context. Think of it as a README for agents. 
-also read readme.md
 
 0) Operating Mode
-You are a senior python systems architect specialising in speech ml systems and backend engineering. 
 
-Network: Internet ON. Use the internet as a resource when you are unsure of how to implement something.
+
+Network: Internet ON. Models are fetched from the release below; subsequent verification runs offline-safe. Also use the internet as a resource when you are unsure of how to implement something.
 
 Execution: CPU-only (no CUDA paths).
 
@@ -55,10 +54,10 @@ Speaker embeds	ECAPA-TDNN (ONNX if present)	Standard embeddings for AHC clusteri
 
 SED	PANNs CNN14 (ONNX) → AudioSet→~20 groups	CNN14 summary + paper. 
 
-ASR	Faster-Whisper on CTranslate2	Fast CPU inference; int8 optional;
+ASR	Faster-Whisper on CTranslate2	Fast CPU inference; int8 optional; float32 default here. 
 
 Tone (V/A/D)	wav2vec2-based (per brief)	—
-SER (8-class)	wav2vec2 emotion model (ser8.int8.onnx)	-
+SER (8-class)	wav2vec2 emotion model	—
 Text emotions	RoBERTa GoEmotions (28)	
 Intent	BART-large-MNLI (zero-shot)	
 
@@ -74,6 +73,34 @@ Outputs schema: src/diaremot/pipeline/outputs.py (defines SEGMENT_COLUMNS)
 Orchestrator/CLI: diaremot/cli.py (python -m diaremot.cli run), diaremot/pipeline/run_pipeline.py, legacy diaremot/pipeline/cli_entry.py
 
 Speaker registry persistence: e.g., speaker_registry.json (centroids, names)
+
+2) Bootstrap: models.zip (internet ON)
+
+Fetch and verify the model bundle from GitHub release v2.AI:
+
+Source: tltrogl/diaremot2-ai → Release v2.AI → asset models.zip
+(release notes: “Add models.zip for Codex setup”). 
+
+Expected SHA-256: 3cc2115f4ef7cd4f9e43cfcec376bf56ea2a8213cb760ab17b27edbc2cac206c
+
+PowerShell (download → verify → install):
+
+$ErrorActionPreference = 'Stop'
+
+$ModelsDir = "$PWD\models"
+$ZipPath   = "$PWD\models.zip"
+$ShaExpect = '3cc2115f4ef7cd4f9e43cfcec376bf56ea2a8213cb760ab17b27edbc2cac206c'
+$Uri       = 'https://github.com/tltrogl/diaremot2-ai/releases/download/v2.AI/models.zip'
+
+Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $ZipPath
+$sha = (Get-FileHash -Algorithm SHA256 -Path $ZipPath).Hash.ToLower()
+if ($sha -ne $ShaExpect) { throw "SHA256 mismatch: $sha vs $ShaExpect" }
+
+if (-not (Test-Path $ModelsDir)) { New-Item -ItemType Directory -Path $ModelsDir | Out-Null }
+Expand-Archive -Path $ZipPath -DestinationPath $ModelsDir -Force
+
+$env:DIAREMOT_MODEL_DIR = (Resolve-Path $ModelsDir).Path
+Write-Host "Models installed to: $env:DIAREMOT_MODEL_DIR"
 
 3) Deterministic Task Protocol (what you return every time)
 
@@ -136,6 +163,8 @@ Follow-Up (optional)
 
 CSV schema: diarized_transcript_with_emotion.csv has exactly 39 columns, fixed order. Never remove/reorder; append only with migration + tests + docs.
 
+Stage count: Exactly 11 (map above), order fixed.
+
 CPU-only: no CUDA/GPU paths.
 
 ONNX-first: Prefer ONNXRuntime; log explicit fallbacks. 
@@ -146,11 +175,9 @@ Defaults to preserve:
 ASR: Faster-Whisper tiny.en via CTranslate2; float32 default in the main pipeline (int8 only if explicitly requested or ASR-only subcommand). 
 GitHub
 
-SED: PANNs CNN14 ONNX; 1.0 s frames / 0.5 s hop; median 3-5; hysteresis enter ≥0.50 / exit ≤0.35; min_dur=0.30 s; merge_gap≤0.20 s. 
+SED: PANNs CNN14 ONNX; 1.0 s frames / 0.5 s hop; median 3–5; hysteresis enter ≥0.50 / exit ≤0.35; min_dur=0.30 s; merge_gap≤0.20 s. 
 
-SER: 8-class wav2vec2 ONNX at Affect/ser8-onnx-int8/ser8.int8.onnx; no Torch fallback paths remain. 
-
-Diarization: Silero VAD (ONNX) → ECAPA-TDNN embeddings → AHC; typical defaults vad_threshold≈0.22, vad_min_speech_sec=0.80, vad_min_silence_sec=0.80, vad_speech_pad_sec=0.10, ahc_distance_threshold≈0.20; post rules: collar≈0.25 s, min_turn_sec=1.50, max_gap_to_merge_sec=1.00. 
+Diarization: Silero VAD (ONNX) → ECAPA-TDNN embeddings → AHC; typical defaults vad_threshold≈0.35, vad_min_speech_sec=0.80, vad_min_silence_sec=0.80, vad_speech_pad_sec=0.10, ahc_distance_threshold≈0.15; post rules: collar≈0.25 s, min_turn_sec=1.50, max_gap_to_merge_sec=1.00. 
 Paralinguistics: Praat-Parselmouth voice metrics; on failure, write placeholders (schema must remain intact).
 
 NLP: GoEmotions (28) and BART-MNLI intent; keep JSON distributions. 
@@ -222,44 +249,3 @@ PANNs CNN14 (AudioSet-trained SED).
 GoEmotions (RoBERTa base). 
 
 FacebookAI/roberta-large-mnli 
-
----
-Codex IDE Agent Only
-3b) Codex IDE Agent Task Protocol (Local Sessions)
-
-Purpose: Tailor the agent behavior when running inside the local Codex IDE (this environment). This section does not modify cloud setup; it constrains local sessions to be explicit, read-first, and user-gated.
-
-You are a senior python systems architect specialising in speech ml systems and backend engineering. 
-
-Session Start: Source Check (read-only)
-- Allowed without prior approval at the start of each session.
-- Actions: list repo structure; read key anchors in short chunks (≤250 lines) like `src/diaremot/pipeline/stages/__init__.py` and `src/diaremot/pipeline/outputs.py` to build context.
-- Constraints: no writes, no installs, no execution beyond file reads.
-
-Task Cycle (ingest → plan → implement → lint → test)
-- Ingest: confirm the user’s request and any contracts that apply.
-- Plan: detailed but simple; wait for confirmation before execution.
-- Implement: apply surgical diffs only to the files in scope; preserve APIs and style.
-- Lint/Test: run only on explicit user request; default commands are `ruff check src/ tests/` and `pytest -q`.
-
-Local Contracts (always respected in edits)
-
-- CPU-only paths; prefer ONNX Runtime CPU EP; log fallbacks when code paths are added.
-
-Reports (when work is performed)
-- Summarize: what changed and why (1–3 sentences).
-- If commands were run: list exact commands with exit codes and tail logs for failures.
-- Risks/Assumptions: bullets relevant to the change.
-
-Failure Policy (local)
-- If a requested action would violate contracts or needs unavailable prerequisites (e.g., models), stop and return a concise failure report with minimal relevant logs and a remediation suggestion.
-
-Readme-Driven Local Process (reference: README.md)
-- Default reference: follow processes defined in `README.md` for install, usage, and models.
-- Local setup (on request):
-  - Create venv (Python 3.11), install deps from `requirements.txt`, then `pip install -e .`.
-  - If needed, install Torch CPU from the official CPU index.
-  - Optional verification: `python -m diaremot.cli diagnostics`.
-- Model paths: honor the “Model Search Paths” order in README.md.
-- Usage: prefer `python -m diaremot.cli run --input ... --outdir ...` with explicit flags as per README.md.
-- Fallbacks: if ONNX is unavailable, only use PyTorch/Transformers when the user authorizes slower fallbacks.
