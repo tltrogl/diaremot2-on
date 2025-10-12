@@ -1,0 +1,2 @@
+[console_scripts]
+diaremot = diaremot.cli:main

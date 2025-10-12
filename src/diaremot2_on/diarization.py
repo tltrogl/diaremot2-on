@@ -15,8 +15,8 @@ rest of the pipeline.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Iterable, List, Sequence
 
 
 @dataclass
@@ -61,7 +61,7 @@ class DiarizationClustering:
         self._clusterer = clusterer
         self._label_prefix = label_prefix
 
-    def assign_speakers(self, segments: Sequence[Segment]) -> List[Segment]:
+    def assign_speakers(self, segments: Sequence[Segment]) -> list[Segment]:
         """Assign speaker ids to the provided segments."""
 
         if not segments:
@@ -71,7 +71,7 @@ class DiarizationClustering:
         labels = self._fit_predict(embeddings)
         speaker_labels = self._labels_to_speakers(labels)
 
-        labelled_segments: List[Segment] = []
+        labelled_segments: list[Segment] = []
         for segment, speaker in zip(segments, speaker_labels):
             labelled_segments.append(
                 Segment(
@@ -84,7 +84,7 @@ class DiarizationClustering:
         return labelled_segments
 
     # --- internal helpers -------------------------------------------------
-    def _fit_predict(self, embeddings: Sequence[Sequence[float]]) -> List[int]:
+    def _fit_predict(self, embeddings: Sequence[Sequence[float]]) -> list[int]:
         """Execute the underlying clustering model."""
 
         if len(embeddings) == 1:
@@ -93,11 +93,11 @@ class DiarizationClustering:
         labels = self._clusterer.fit_predict(embeddings)
         return [int(label) for label in labels]
 
-    def _labels_to_speakers(self, labels: Iterable[int]) -> List[str]:
+    def _labels_to_speakers(self, labels: Iterable[int]) -> list[str]:
         """Convert raw cluster ids into stable speaker labels."""
 
         speaker_map: dict[int, str] = {}
-        result: List[str] = []
+        result: list[str] = []
         for label in labels:
             if label not in speaker_map:
                 speaker_map[label] = f"{self._label_prefix}_{len(speaker_map) + 1}"

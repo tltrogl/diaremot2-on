@@ -29,7 +29,6 @@ from .orchestrator import (
     run_pipeline,
     verify_dependencies,
 )
-from .speaker_diarization import SpeakerDiarizer
 from .outputs import (
     SEGMENT_COLUMNS,
     default_affect,
@@ -40,6 +39,7 @@ from .outputs import (
     write_speakers_summary,
     write_timeline_csv,
 )
+from .speaker_diarization import SpeakerDiarizer
 
 __all__ = [
     "AudioAnalysisPipelineV2",

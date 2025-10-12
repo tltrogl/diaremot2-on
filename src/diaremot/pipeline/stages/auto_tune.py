@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..auto_tuner import AutoTuner
 from ..logging_utils import StageGuard
 from .base import PipelineState
+
+if TYPE_CHECKING:
+    from ..orchestrator import AudioAnalysisPipelineV2
 
 __all__ = ["run"]
 

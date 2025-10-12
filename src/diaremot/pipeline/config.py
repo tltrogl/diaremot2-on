@@ -52,6 +52,9 @@ class PipelineConfig:
     registry_path: Path = Path("speaker_registry.json")
     ahc_distance_threshold: float = DiarizationConfig.ahc_distance_threshold
     speaker_limit: int | None = None
+    clustering_backend: str = "ahc"
+    min_speakers: int | None = None
+    max_speakers: int | None = None
     whisper_model: str = "tiny.en"
     asr_backend: str = "faster"
     compute_type: str = "int8"
@@ -186,6 +189,21 @@ class PipelineConfig:
         _ensure_numeric_range("batch_timeout_sec", self.batch_timeout_sec, gt=0.0)
         self._validate_positive_int("target_sr", self.target_sr)
         _ensure_numeric_range("ahc_distance_threshold", self.ahc_distance_threshold, ge=0.0)
+
+        # Diarization clustering backend validation
+        self.clustering_backend = self._lower_choice(
+            "clustering_backend", self.clustering_backend, {"ahc", "spectral"}
+        )
+        if self.min_speakers is not None:
+            self._validate_positive_int("min_speakers", int(self.min_speakers))
+        if self.max_speakers is not None:
+            self._validate_positive_int("max_speakers", int(self.max_speakers))
+        if (
+            self.min_speakers is not None
+            and self.max_speakers is not None
+            and int(self.min_speakers) > int(self.max_speakers)
+        ):
+            raise ValueError("min_speakers must be <= max_speakers")
 
         if self.chunk_size_minutes * 60.0 <= self.chunk_overlap_seconds:
             raise ValueError("chunk_overlap_seconds must be smaller than chunk_size_minutes * 60")

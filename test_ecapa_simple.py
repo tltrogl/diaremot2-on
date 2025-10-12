@@ -1,5 +1,6 @@
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 output = []
@@ -14,7 +15,6 @@ try:
     if e.session:
         # Test embedding extraction
         import numpy as np
-        import librosa
         # Generate 1.5s of noise
         sr = 16000
         wav = np.random.randn(int(1.5 * sr)).astype(np.float32) * 0.01

@@ -37,7 +37,7 @@ DiaRemot is a production-ready, CPU-only speech intelligence system that process
 
 ### Primary Outputs
 
-**`diarized_transcript_with_emotion.csv`** – 39-column master transcript
+**`diarized_transcript_with_emotion.csv`** - 39-column master transcript
 - **Temporal**: start, end, duration_s
 - **Speaker**: speaker_id, speaker_name
 - **Content**: text, asr_logprob_avg
@@ -47,7 +47,9 @@ DiaRemot is a production-ready, CPU-only speech intelligence system that process
 - **Context**: sound events, SNR estimates
 - **Quality Flags**: low confidence, VAD instability, error flags
 
-**`summary.html`** – Interactive HTML report
+**`diarized_transcript_readable.txt`** - Plain-text transcript with diarized turns, human-friendly timestamps, VAD stability, top sound events, dominant intent, and affect snapshot (valence/arousal/dominance + emotion hint).
+
+**`summary.html`** - Interactive HTML report
 - Quick Take overview
 - Speaker snapshots with analytics
 - Timeline with clickable timestamps

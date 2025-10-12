@@ -26,9 +26,9 @@ import json
 import logging
 import math
 import time
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
 
 import numpy as np
 from scipy.signal import medfilt

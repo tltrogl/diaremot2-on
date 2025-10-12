@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import subprocess
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..logging_utils import StageGuard
 from ..pipeline_checkpoint_system import ProcessingStage
 from .base import PipelineState
 from .utils import atomic_write_json
+
+if TYPE_CHECKING:
+    from ..orchestrator import AudioAnalysisPipelineV2
 
 __all__ = ["run"]
 

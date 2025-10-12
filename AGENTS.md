@@ -4,7 +4,7 @@ Agents read AGENTS.md to learn build/test/style rules and context. Think of it a
 0) Operating Mode
 
 
-Network: Internet ON. Models are fetched from the release below; subsequent verification runs offline-safe. Also use the internet as a resource when you are unsure of how to implement something.
+Network: Internet ON. 
 
 Execution: CPU-only (no CUDA paths).
 
@@ -74,33 +74,6 @@ Orchestrator/CLI: diaremot/cli.py (python -m diaremot.cli run), diaremot/pipelin
 
 Speaker registry persistence: e.g., speaker_registry.json (centroids, names)
 
-2) Bootstrap: models.zip (internet ON)
-
-Fetch and verify the model bundle from GitHub release v2.AI:
-
-Source: tltrogl/diaremot2-ai → Release v2.AI → asset models.zip
-(release notes: “Add models.zip for Codex setup”). 
-
-Expected SHA-256: 3cc2115f4ef7cd4f9e43cfcec376bf56ea2a8213cb760ab17b27edbc2cac206c
-
-PowerShell (download → verify → install):
-
-$ErrorActionPreference = 'Stop'
-
-$ModelsDir = "$PWD\models"
-$ZipPath   = "$PWD\models.zip"
-$ShaExpect = '3cc2115f4ef7cd4f9e43cfcec376bf56ea2a8213cb760ab17b27edbc2cac206c'
-$Uri       = 'https://github.com/tltrogl/diaremot2-ai/releases/download/v2.AI/models.zip'
-
-Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $ZipPath
-$sha = (Get-FileHash -Algorithm SHA256 -Path $ZipPath).Hash.ToLower()
-if ($sha -ne $ShaExpect) { throw "SHA256 mismatch: $sha vs $ShaExpect" }
-
-if (-not (Test-Path $ModelsDir)) { New-Item -ItemType Directory -Path $ModelsDir | Out-Null }
-Expand-Archive -Path $ZipPath -DestinationPath $ModelsDir -Force
-
-$env:DIAREMOT_MODEL_DIR = (Resolve-Path $ModelsDir).Path
-Write-Host "Models installed to: $env:DIAREMOT_MODEL_DIR"
 
 3) Deterministic Task Protocol (what you return every time)
 

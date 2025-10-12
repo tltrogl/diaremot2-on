@@ -5,13 +5,16 @@ from __future__ import annotations
 import json
 import math
 from bisect import bisect_left
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from ..logging_utils import StageGuard
 from ..outputs import ensure_segment_keys
 from .base import PipelineState
+
+if TYPE_CHECKING:
+    from ..orchestrator import AudioAnalysisPipelineV2
 
 __all__ = ["run"]
 

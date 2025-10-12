@@ -4,9 +4,10 @@ import argparse
 import csv
 import json
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -38,7 +39,7 @@ class Segment:
     text: str
 
 
-def _iter_segments_from_csv(csv_path: Path, limit: Optional[int]) -> Iterable[Segment]:
+def _iter_segments_from_csv(csv_path: Path, limit: int | None) -> Iterable[Segment]:
     with csv_path.open("r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         count = 0
@@ -100,7 +101,7 @@ def main() -> None:
     duration = len(y) / float(sr) if len(y) else 0.0
 
     # Build segments
-    segments: List[Segment] = []
+    segments: list[Segment] = []
     if args.segments_csv and args.segments_csv.exists():
         segments.extend(_iter_segments_from_csv(args.segments_csv, args.limit))
     else:

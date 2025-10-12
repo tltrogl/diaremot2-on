@@ -2229,9 +2229,9 @@ def main():
 
         libs = results.get("libraries_available", {})
         print("\nLibrary Status:")
-        print(f"  Librosa: {Y if libs.get('librosa') else 'N'}")
-        print(f"  SciPy: {Y if libs.get('scipy') else 'N'}")
-        print(f"  Parselmouth: {Y if libs.get('parselmouth') else 'N'}")
+        print(f"  Librosa: {'Y' if libs.get('librosa') else 'N'}")
+        print(f"  SciPy: {'Y' if libs.get('scipy') else 'N'}")
+        print(f"  Parselmouth: {'Y' if libs.get('parselmouth') else 'N'}")
 
         if args.output:
             with open(args.output, "w") as f:

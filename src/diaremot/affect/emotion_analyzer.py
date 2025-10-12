@@ -11,15 +11,16 @@ import json
 import logging
 import math
 import os
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any
 
 import numpy as np
 
-from .intent_defaults import INTENT_LABELS_DEFAULT
 from ..io.onnx_utils import create_onnx_session
 from ..pipeline.runtime_env import DEFAULT_MODELS_ROOT
+from .intent_defaults import INTENT_LABELS_DEFAULT
 
 # Preprocessing: strictly librosa/scipy/numpy
 try:
@@ -166,7 +167,7 @@ def _normalize_intent_label(label: str) -> str:
 
 
 # GoEmotions 28 labels (SamLowe/roberta-base-go_emotions)
-GOEMOTIONS_LABELS: List[str] = [
+GOEMOTIONS_LABELS: list[str] = [
     "admiration",
     "amusement",
     "anger",
@@ -199,7 +200,7 @@ GOEMOTIONS_LABELS: List[str] = [
 
 
 # Default 8-class SER labels (common mapping; can be overridden by model-specific labels)
-SER8_LABELS: List[str] = [
+SER8_LABELS: list[str] = [
     "neutral",
     "calm",
     "happy",
@@ -221,7 +222,7 @@ def _resolve_model_dir() -> Path:
 
 
 def _resolve_component_dir(
-    cli_value: Optional[str], env_key: str, *default_subpath: str
+    cli_value: str | None, env_key: str, *default_subpath: str
 ) -> Path:
     candidates: list[Path] = []
     if cli_value:
@@ -256,7 +257,7 @@ def _select_first_existing(directory: Path, names: Sequence[str]) -> Path:
     return directory / names[0]
 
 
-def _normalize_backend(value: Optional[str]) -> str:
+def _normalize_backend(value: str | None) -> str:
     if not value:
         return "auto"
     normalized = value.lower()
@@ -277,14 +278,12 @@ def _intent_dir_has_assets(path: Path) -> bool:
     if not path.exists() or not path.is_dir():
         return False
 
-    # ONNX files colocated with tokenizer/config in the same directory
-    for name in ("model_uint8.onnx", "model_int8.onnx", "model.onnx"):
-        if (path / name).exists():
-            return True
+    has_onnx = any((path / name).exists() for name in ("model_uint8.onnx", "model_int8.onnx", "model.onnx"))
 
     cfg_path = path / "config.json"
     if not cfg_path.exists():
         return False
+
     try:
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
         model_type = cfg.get("model_type")
@@ -293,18 +292,24 @@ def _intent_dir_has_assets(path: Path) -> bool:
     except Exception:
         return False
 
-    # Require a tokenizer alongside config to build inputs locally
-    if (path / "tokenizer.json").exists():
+    tokenizer_present = (path / "tokenizer.json").exists() or (
+        (path / "vocab.json").exists() and (path / "merges.txt").exists()
+    )
+    if not tokenizer_present:
+        return False
+
+    # If ONNX exports are present we require them to live alongside the tokenizer/config combo.
+    if has_onnx:
         return True
-    if (path / "vocab.json").exists() and (path / "merges.txt").exists():
-        return True
-    return False
+
+    # Allow pure Transformers directories that rely on torch fallback.
+    return True
 
 
-def _intent_candidate_dirs(explicit: Optional[str]) -> Iterable[Path]:
+def _intent_candidate_dirs(explicit: str | None) -> Iterable[Path]:
     candidates: list[Path] = []
 
-    def _add(candidate: Optional[str | Path]) -> None:
+    def _add(candidate: str | Path | None) -> None:
         if not candidate:
             return
         path = Path(candidate).expanduser()
@@ -332,7 +337,7 @@ def _intent_candidate_dirs(explicit: Optional[str]) -> Iterable[Path]:
         yield candidate
 
 
-def _resolve_intent_model_dir(explicit: Optional[str]) -> Optional[str]:
+def _resolve_intent_model_dir(explicit: str | None) -> str | None:
     # Explicit CLI value wins when valid, otherwise do not fall back silently
     if explicit:
         path = Path(explicit).expanduser()
@@ -355,7 +360,7 @@ def _resolve_intent_model_dir(explicit: Optional[str]) -> Optional[str]:
     return None
 
 
-def _find_label_index(id2label: Dict[int, str], target: str) -> Optional[int]:
+def _find_label_index(id2label: dict[int, str], target: str) -> int | None:
     target_lower = target.lower()
     for idx, label in id2label.items():
         if str(label).lower() == target_lower:
@@ -415,7 +420,7 @@ class EmotionOutputs:
     affect_hint: str = "neutral-status"
 
     @classmethod
-    def from_affect(cls, payload: Mapping[str, Any]) -> "EmotionOutputs":
+    def from_affect(cls, payload: Mapping[str, Any]) -> EmotionOutputs:
         def _safe_float(value: Any) -> float:
             try:
                 num = float(value)
@@ -533,9 +538,9 @@ class OnnxTextEmotion:
     def __init__(
         self,
         model_path: str,
-        labels: List[str] = GOEMOTIONS_LABELS,
+        labels: list[str] = GOEMOTIONS_LABELS,
         *,
-        tokenizer_source: Optional[str | os.PathLike[str]] = None,
+        tokenizer_source: str | os.PathLike[str] | None = None,
         disable_downloads: bool = False,
     ):
         self.labels = labels
@@ -550,7 +555,7 @@ class OnnxTextEmotion:
         self,
         model_path: str,
         *,
-        tokenizer_source: Optional[str | os.PathLike[str]],
+        tokenizer_source: str | os.PathLike[str] | None,
         disable_downloads: bool,
     ):
         from transformers import AutoTokenizer  # type: ignore
@@ -580,7 +585,7 @@ class OnnxTextEmotion:
             "Unable to load text emotion tokenizer; attempted candidates: " + details
         )
 
-    def __call__(self, text: str) -> Dict[str, float]:
+    def __call__(self, text: str) -> dict[str, float]:
         enc = self.tokenizer(
             text,
             return_tensors="np",
@@ -616,7 +621,7 @@ class HfTextEmotionFallback:
             truncation=True,
         )
 
-    def __call__(self, text: str) -> Dict[str, float]:
+    def __call__(self, text: str) -> dict[str, float]:
         out = self.pipe(text)[0]
         # HF returns list of dicts with 'label' and 'score'
         full = {d["label"].lower(): float(d["score"]) for d in out}
@@ -629,7 +634,7 @@ class HfTextEmotionFallback:
 
 
 class OnnxAudioEmotion:
-    def __init__(self, model_path: str, labels: List[str] = SER8_LABELS):
+    def __init__(self, model_path: str, labels: list[str] = SER8_LABELS):
         path = Path(model_path).expanduser()
         self.model_path = os.fspath(path)
         self.labels = list(labels)
@@ -647,7 +652,7 @@ class OnnxAudioEmotion:
             self.model_path,
         )
 
-    def _as_waveform_input(self, y: np.ndarray) -> Dict[str, np.ndarray]:
+    def _as_waveform_input(self, y: np.ndarray) -> dict[str, np.ndarray]:
         arr = y.astype(np.float32)
         if self._input_rank <= 1:
             return {self._input_name: arr}
@@ -658,7 +663,7 @@ class OnnxAudioEmotion:
         # Let caller decide whether to fall back to mel
         raise RuntimeError("Waveform input unsupported for rank>=4")
 
-    def _as_mel_input(self, y: np.ndarray) -> Optional[Dict[str, np.ndarray]]:
+    def _as_mel_input(self, y: np.ndarray) -> dict[str, np.ndarray] | None:
         if librosa is None:
             return None
         sr = _sr_target()
@@ -668,7 +673,7 @@ class OnnxAudioEmotion:
         x = mel_db.astype(np.float32)[None, None, :, :]  # [1,1,64,frames]
         return {self._input_name: x}
 
-    def __call__(self, y: np.ndarray, sr: int) -> Tuple[str, Dict[str, float]]:
+    def __call__(self, y: np.ndarray, sr: int) -> tuple[str, dict[str, float]]:
         y = _ensure_16k_mono(y, sr)
         y = _trim_max_len(y, sr=_sr_target(), max_seconds=20.0)
         out = None
@@ -708,7 +713,7 @@ class OnnxVADEmotion:
     def __init__(self, model_path: str):
         self.sess = _ort_session(model_path)
 
-    def __call__(self, y: np.ndarray, sr: int) -> Tuple[float, float, float]:
+    def __call__(self, y: np.ndarray, sr: int) -> tuple[float, float, float]:
         # Keep simple; feed pooled features or raw waveform
         if y.ndim > 1:
             y = np.mean(y, axis=1)
@@ -744,12 +749,12 @@ class EmotionAnalyzer:
 
     def __init__(
         self,
-        model_dir: Optional[str] = None,
-        disable_downloads: Optional[bool] = None,
+        model_dir: str | None = None,
+        disable_downloads: bool | None = None,
         *,
-        text_model_dir: Optional[str] = None,
-        ser_model_dir: Optional[str] = None,
-        vad_model_dir: Optional[str] = None,
+        text_model_dir: str | None = None,
+        ser_model_dir: str | None = None,
+        vad_model_dir: str | None = None,
     ):
         base_dir = Path(model_dir).expanduser() if model_dir else _resolve_model_dir()
         self.model_dir = str(base_dir)
@@ -787,10 +792,10 @@ class EmotionAnalyzer:
         )
 
         # Try ONNX-only for each component (lazily initialised)
-        self._text_model: Optional[OnnxTextEmotion] = None
-        self._text_fallback: Optional[HfTextEmotionFallback] = None
-        self._audio_model: Optional[OnnxAudioEmotion] = None
-        self._vad_model: Optional[OnnxVADEmotion] = None
+        self._text_model: OnnxTextEmotion | None = None
+        self._text_fallback: HfTextEmotionFallback | None = None
+        self._audio_model: OnnxAudioEmotion | None = None
+        self._vad_model: OnnxVADEmotion | None = None
 
         # Allow explicit override from env (exported ONNX path)
         env_ser = os.getenv("DIAREMOT_SER_ONNX")
@@ -879,7 +884,7 @@ class EmotionAnalyzer:
             top5 = [dict(item) for item in default_text.top5]
         return TextEmotionResult(top5=top5, full=normalized)
 
-    def analyze_audio(self, y: Optional[np.ndarray], sr: Optional[int]) -> SpeechEmotionResult:
+    def analyze_audio(self, y: np.ndarray | None, sr: int | None) -> SpeechEmotionResult:
         if y is None or sr is None:
             return _default_speech_result()
         self._ensure_audio_model()
@@ -900,7 +905,7 @@ class EmotionAnalyzer:
         low_conf = _ser_low_confidence(normalized)
         return SpeechEmotionResult(top=top, scores=normalized, low_confidence=low_conf)
 
-    def analyze_vad_emotion(self, y: Optional[np.ndarray], sr: Optional[int]) -> VadEmotionResult:
+    def analyze_vad_emotion(self, y: np.ndarray | None, sr: int | None) -> VadEmotionResult:
         if y is None or sr is None:
             return _default_vad_result()
         self._ensure_vad_model()
@@ -966,10 +971,10 @@ class EmotionAnalyzer:
     def _analyze_components(
         self,
         *,
-        wav: Optional[np.ndarray],
-        sr: Optional[int],
+        wav: np.ndarray | None,
+        sr: int | None,
         text: str,
-    ) -> Tuple[TextEmotionResult, SpeechEmotionResult, VadEmotionResult]:
+    ) -> tuple[TextEmotionResult, SpeechEmotionResult, VadEmotionResult]:
         text_res = self.analyze_text(text)
         speech_res = self.analyze_audio(wav, sr)
         vad_res = self.analyze_vad_emotion(wav, sr)
@@ -978,8 +983,8 @@ class EmotionAnalyzer:
     def analyze(
         self,
         *,
-        wav: Optional[np.ndarray],
-        sr: Optional[int],
+        wav: np.ndarray | None,
+        sr: int | None,
         text: str,
     ) -> dict[str, Any]:
         text_res, speech_res, vad_res = self._analyze_components(
@@ -994,7 +999,7 @@ class EmotionAnalyzer:
         )
 
     def analyze_segment(
-        self, text: str, audio_wave: Optional[np.ndarray], sr: Optional[int]
+        self, text: str, audio_wave: np.ndarray | None, sr: int | None
     ) -> EmotionOutputs:
         """Analyze a single segment (text + audio) and serialize for storage."""
 
@@ -1017,14 +1022,14 @@ class EmotionIntentAnalyzer(EmotionAnalyzer):
         *,
         text_emotion_model: str = "SamLowe/roberta-base-go_emotions",
         intent_labels: Sequence[str] | None = None,
-        affect_backend: Optional[str] = None,
-        affect_text_model_dir: Optional[str] = None,
-        affect_ser_model_dir: Optional[str] = None,
-        affect_vad_model_dir: Optional[str] = None,
-        affect_intent_model_dir: Optional[str] = None,
-        analyzer_threads: Optional[int] = None,
-        disable_downloads: Optional[bool] = None,
-        model_dir: Optional[str] = None,
+        affect_backend: str | None = None,
+        affect_text_model_dir: str | None = None,
+        affect_ser_model_dir: str | None = None,
+        affect_vad_model_dir: str | None = None,
+        affect_intent_model_dir: str | None = None,
+        analyzer_threads: int | None = None,
+        disable_downloads: bool | None = None,
+        model_dir: str | None = None,
     ) -> None:
         super().__init__(
             model_dir=model_dir,
@@ -1036,7 +1041,7 @@ class EmotionIntentAnalyzer(EmotionAnalyzer):
 
         self.text_emotion_model = text_emotion_model
         labels = intent_labels or INTENT_LABELS_DEFAULT
-        self.intent_labels: List[str] = [str(label) for label in labels]
+        self.intent_labels: list[str] = [str(label) for label in labels]
         self.affect_backend = _normalize_backend(affect_backend)
         self.analyzer_threads = analyzer_threads
 
@@ -1046,12 +1051,12 @@ class EmotionIntentAnalyzer(EmotionAnalyzer):
 
         self.affect_intent_model_dir = _resolve_intent_model_dir(affect_intent_model_dir)
 
-        self._intent_session: Optional[object] = None
-        self._intent_tokenizer: Optional[Callable[..., Dict[str, np.ndarray]]] = None
-        self._intent_config: Optional[object] = None
-        self._intent_pipeline: Optional[Callable[..., object]] = None
-        self._intent_entail_idx: Optional[int] = None
-        self._intent_contra_idx: Optional[int] = None
+        self._intent_session: object | None = None
+        self._intent_tokenizer: Callable[..., dict[str, np.ndarray]] | None = None
+        self._intent_config: object | None = None
+        self._intent_pipeline: Callable[..., object] | None = None
+        self._intent_entail_idx: int | None = None
+        self._intent_contra_idx: int | None = None
         self._intent_hypothesis_template: str = "This example is {}."
 
     # ---- Intent helpers ----
@@ -1065,7 +1070,7 @@ class EmotionIntentAnalyzer(EmotionAnalyzer):
             if not self._ensure_intent_onnx(strict=False):
                 self._ensure_intent_pipeline()
 
-    def _select_onnx_model(self, model_dir: Path) -> Optional[Path]:
+    def _select_onnx_model(self, model_dir: Path) -> Path | None:
         for name in ("model_uint8.onnx", "model.onnx"):
             candidate = model_dir / name
             if candidate.exists():
@@ -1177,7 +1182,7 @@ class EmotionIntentAnalyzer(EmotionAnalyzer):
             return False
         return True
 
-    def _intent_default_prediction(self) -> Tuple[str, List[Dict[str, float]]]:
+    def _intent_default_prediction(self) -> tuple[str, list[dict[str, float]]]:
         if not self.intent_labels:
             return "", []
         topn = min(3, len(self.intent_labels))
@@ -1186,13 +1191,13 @@ class EmotionIntentAnalyzer(EmotionAnalyzer):
         entries = [{"label": label, "score": score} for label in default_labels]
         return default_labels[0], entries
 
-    def _infer_intent_with_onnx(self, text: str) -> Tuple[str, List[Dict[str, float]]]:
+    def _infer_intent_with_onnx(self, text: str) -> tuple[str, list[dict[str, float]]]:
         if self._intent_session is None or self._intent_tokenizer is None:
             return self._intent_default_prediction()
 
         entail_idx = self._intent_entail_idx
         contra_idx = self._intent_contra_idx
-        results: List[Dict[str, float]] = []
+        results: list[dict[str, float]] = []
 
         for label in self.intent_labels:
             hypothesis = self._intent_hypothesis_template.format(label)
@@ -1228,13 +1233,13 @@ class EmotionIntentAnalyzer(EmotionAnalyzer):
         top_label = results[0]["label"] if results else ""
         return top_label, results[: min(3, len(results))]
 
-    def _infer_intent_with_pipeline(self, text: str) -> Tuple[str, List[Dict[str, float]]]:
+    def _infer_intent_with_pipeline(self, text: str) -> tuple[str, list[dict[str, float]]]:
         if self._intent_pipeline is None:
             return self._intent_default_prediction()
 
         candidates = self.intent_labels or ["other"]
         raw = self._intent_pipeline(text, candidate_labels=candidates, multi_label=True)
-        entries: List[Dict[str, float]]
+        entries: list[dict[str, float]]
         if isinstance(raw, dict) and "labels" in raw and "scores" in raw:
             entries = [
                 {"label": str(label), "score": float(score)}
@@ -1256,7 +1261,7 @@ class EmotionIntentAnalyzer(EmotionAnalyzer):
         return top_label, entries[: min(3, len(entries))]
 
     # ---- Public API extension ----
-    def _infer_intent(self, text: str) -> Tuple[str, List[Dict[str, float]]]:
+    def _infer_intent(self, text: str) -> tuple[str, list[dict[str, float]]]:
         clean_text = (text or "").strip()
         if not clean_text:
             return self._intent_default_prediction()
@@ -1280,8 +1285,8 @@ class EmotionIntentAnalyzer(EmotionAnalyzer):
     def analyze(
         self,
         *,
-        wav: Optional[np.ndarray],
-        sr: Optional[int],
+        wav: np.ndarray | None,
+        sr: int | None,
         text: str,
     ) -> dict[str, Any]:
         text_res, speech_res, vad_res = self._analyze_components(

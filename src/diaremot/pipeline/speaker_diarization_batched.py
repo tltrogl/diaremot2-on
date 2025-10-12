@@ -392,7 +392,6 @@ class _SileroWrapper:
 
         # Initialize state for batch
         state = np.zeros(tuple(state_shape), dtype=np.float32)
-        sr_array = np.array(sr, dtype=np.int64)
 
         # SINGLE ONNX CALL for all chunks
         feeds: dict[str, np.ndarray] = {self._onnx_input_name: windows}

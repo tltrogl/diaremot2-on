@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..utils.hash import hash_file
 from .onnx_runtime_guard import (
@@ -13,7 +13,9 @@ from .onnx_runtime_guard import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    pass
+    from onnxruntime import InferenceSession as OrtInferenceSession
+else:  # pragma: no cover - runtime safe fallback
+    OrtInferenceSession = Any  # type: ignore[misc,assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +76,7 @@ def ensure_onnx_model(
 
 def create_onnx_session(
     model_path: str | Path, *, cpu_only: bool = True, threads: int = 1
-) -> onnxruntime.InferenceSession:
+) -> OrtInferenceSession:
     """Create an ONNX Runtime session with consistent CPU behaviour."""
     ort = ensure_onnxruntime()
     opts = ort.SessionOptions()

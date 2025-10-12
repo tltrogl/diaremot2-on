@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from ..config import dependency_health_summary
 from ..logging_utils import StageGuard
 from .base import PipelineState
+
+if TYPE_CHECKING:
+    from ..orchestrator import AudioAnalysisPipelineV2
 
 __all__ = ["run"]
 

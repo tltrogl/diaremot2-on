@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
+from diaremot.pipeline.speaker_diarization import DiarizedTurn, collapse_single_speaker_turns
 from diaremot2_on.diarization import DiarizationClustering, Segment
 
 
@@ -67,3 +69,48 @@ def test_singleton_input_shortcuts_clusterer():
 
     assert [segment.speaker for segment in labelled] == ["SPK_1"]
     assert clusterer.calls == 0
+
+
+def _turn(speaker: str, start: float, end: float, *, embedding: np.ndarray | None = None) -> DiarizedTurn:
+    emb = embedding if embedding is not None else np.ones(3, dtype=np.float32)
+    return DiarizedTurn(
+        start=start,
+        end=end,
+        speaker=speaker,
+        speaker_name=speaker,
+        embedding=emb,
+    )
+
+
+def test_collapse_single_speaker_by_dominance():
+    turns = [
+        _turn("Speaker_1", 0.0, 5.0, embedding=np.ones(4, dtype=np.float32)),
+        _turn("Speaker_1", 5.0, 10.0, embedding=np.ones(4, dtype=np.float32)),
+        _turn("Speaker_2", 10.0, 10.4, embedding=np.ones(4, dtype=np.float32) * 0.99),
+        _turn("Speaker_3", 10.4, 10.8, embedding=np.ones(4, dtype=np.float32) * 1.01),
+    ]
+
+    collapsed, label, reason = collapse_single_speaker_turns(
+        turns, dominance_threshold=0.8, centroid_threshold=0.2, min_turns=3
+    )
+
+    assert collapsed
+    assert label == "Speaker_1"
+    assert reason is not None
+    assert {turn.speaker for turn in turns} == {"Speaker_1"}
+
+
+def test_collapse_respects_true_multi_speaker():
+    turns = [
+        _turn("Speaker_A", 0.0, 5.0, embedding=np.array([1.0, 0.0, 0.0], dtype=np.float32)),
+        _turn("Speaker_B", 5.0, 10.0, embedding=np.array([0.0, 1.0, 0.0], dtype=np.float32)),
+    ]
+
+    collapsed, label, reason = collapse_single_speaker_turns(
+        turns, dominance_threshold=0.8, centroid_threshold=0.05, min_turns=2
+    )
+
+    assert not collapsed
+    assert label is None
+    assert reason is None
+    assert {turn.speaker for turn in turns} == {"Speaker_A", "Speaker_B"}

@@ -49,7 +49,9 @@ except Exception:  # pragma: no cover - env dependent
     _HAVE_LIBROSA = False
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    pass
+    from onnxruntime import InferenceSession as OrtInferenceSession
+else:  # pragma: no cover - runtime safe fallback
+    OrtInferenceSession = Any  # type: ignore[misc,assignment]
 
 _HAVE_ORT = onnxruntime_available()
 if not _HAVE_ORT:
@@ -128,7 +130,7 @@ class PANNSEventTagger:
                 backend = "none"
         self.backend = backend
         self._tagger: AudioTagging | None = None  # type: ignore
-        self._session: onnxruntime.InferenceSession | None = None
+        self._session: OrtInferenceSession | None = None
         self._labels: list[str] | None = None
         self.model_paths: tuple[Path, Path] | None = None
         self.available = True

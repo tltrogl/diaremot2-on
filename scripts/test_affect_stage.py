@@ -48,10 +48,10 @@ def _load_norm_tx(csv_path: Path) -> list[dict[str, Any]]:
 
 
 def main() -> None:
-    from diaremot.pipeline.orchestrator import AudioAnalysisPipelineV2
-    from diaremot.pipeline.stages.base import PipelineState
     from diaremot.pipeline.logging_utils import StageGuard
+    from diaremot.pipeline.orchestrator import AudioAnalysisPipelineV2
     from diaremot.pipeline.stages import affect as stage_affect
+    from diaremot.pipeline.stages.base import PipelineState
 
     root = Path.cwd()
     in_path = root / "data" / "sample1.mp3"

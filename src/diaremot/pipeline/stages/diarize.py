@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import subprocess
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..logging_utils import StageGuard
 from ..pipeline_checkpoint_system import ProcessingStage
 from .base import PipelineState
 from .utils import atomic_write_json
+
+if TYPE_CHECKING:
+    from ..orchestrator import AudioAnalysisPipelineV2
 
 __all__ = ["run"]
 
@@ -51,6 +54,15 @@ def _jsonable_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _speaker_metrics(turns: list[dict[str, Any]]) -> tuple[int, int]:
+    speakers = {
+        str(turn.get("speaker", "")).strip()
+        for turn in turns
+        if isinstance(turn, dict) and turn.get("speaker")
+    }
+    return len(speakers), len(turns)
+
+
 def run(pipeline: AudioAnalysisPipelineV2, state: PipelineState, guard: StageGuard) -> None:
     turns: list[dict[str, Any]] = []
     duration_s = state.duration_s
@@ -83,7 +95,11 @@ def run(pipeline: AudioAnalysisPipelineV2, state: PipelineState, guard: StageGua
         if not turns:
             turns.append(_fallback_turn(duration_s))
         state.vad_unstable = False
-        guard.done(turns=len(turns), speakers_est=len({t["speaker"] for t in turns}))
+        speakers_est, turn_count = _speaker_metrics(turns)
+        pipeline.corelog.info(
+            f"[diarize] resume (tx cache) estimated {speakers_est} speakers across {turn_count} turns"
+        )
+        guard.done(turns=turn_count, speakers_est=speakers_est)
     elif state.resume_diar and state.diar_cache:
         turns = state.diar_cache.get("turns", []) or []
         if not turns:
@@ -95,7 +111,11 @@ def run(pipeline: AudioAnalysisPipelineV2, state: PipelineState, guard: StageGua
         except (TypeError, AttributeError):
             vad_toggles = 0
         state.vad_unstable = (vad_toggles / max(1, int(duration_s / 60) or 1)) > 60
-        guard.done(turns=len(turns), speakers_est=len({t.get("speaker") for t in turns}))
+        speakers_est, turn_count = _speaker_metrics(turns)
+        pipeline.corelog.info(
+            f"[diarize] resume (diar cache) estimated {speakers_est} speakers across {turn_count} turns"
+        )
+        guard.done(turns=turn_count, speakers_est=speakers_est)
     else:
         try:
             turns = pipeline.diar.diarize_audio(state.y, state.sr) or []
@@ -120,7 +140,11 @@ def run(pipeline: AudioAnalysisPipelineV2, state: PipelineState, guard: StageGua
         except (TypeError, AttributeError):
             vad_toggles = 0
         state.vad_unstable = (vad_toggles / max(1, int(duration_s / 60) or 1)) > 60
-        guard.done(turns=len(turns), speakers_est=len({t.get("speaker") for t in turns}))
+        speakers_est, turn_count = _speaker_metrics(turns)
+        pipeline.corelog.info(
+            f"[diarize] estimated {speakers_est} speakers across {turn_count} turns"
+        )
+        guard.done(turns=turn_count, speakers_est=speakers_est)
 
         if state.cache_dir:
             try:

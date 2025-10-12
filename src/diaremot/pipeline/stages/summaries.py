@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from ...summaries.conversation_analysis import (
     ConversationMetrics,
     analyze_conversation_flow,
@@ -9,6 +11,9 @@ from ...summaries.conversation_analysis import (
 from ...summaries.speakers_summary_builder import build_speakers_summary
 from ..logging_utils import StageGuard
 from .base import PipelineState
+
+if TYPE_CHECKING:
+    from ..orchestrator import AudioAnalysisPipelineV2
 
 __all__ = [
     "run_overlap",

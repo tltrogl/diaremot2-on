@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import math
 import os
-import random
 import time
 import uuid
 from pathlib import Path
@@ -19,6 +18,7 @@ from ..affect.sed_panns import PANNSEventTagger, SEDConfig  # type: ignore
 from ..summaries.conversation_analysis import ConversationMetrics
 from ..summaries.html_summary_generator import HTMLSummaryGenerator
 from ..summaries.pdf_summary_generator import PDFSummaryGenerator
+from . import speaker_diarization as _speaker_diarization
 from .audio_preprocessing import AudioPreprocessor, PreprocessConfig
 from .auto_tuner import AutoTuner
 from .config import (
@@ -35,6 +35,7 @@ from .logging_utils import CoreLogger, RunStats, StageGuard, _fmt_hms_ms
 from .outputs import (
     default_affect,
     ensure_segment_keys,
+    write_human_transcript,
     write_qc_report,
     write_segments_csv,
     write_segments_jsonl,
@@ -47,12 +48,11 @@ from .runtime_env import (
     WINDOWS_MODELS_ROOT,
     configure_local_cache_env,
 )
-from . import speaker_diarization as _speaker_diarization
+from .stages import PIPELINE_STAGES, PipelineState
 
 # Backwards-compatible aliases for test hooks and StageGuard shims
 DiarizationConfig = _speaker_diarization.DiarizationConfig
 SpeakerDiarizer = _speaker_diarization.SpeakerDiarizer
-from .stages import PIPELINE_STAGES, PipelineState
 
 configure_local_cache_env()
 
@@ -289,6 +289,9 @@ class AudioAnalysisPipelineV2:
                     "ahc_distance_threshold", 0.15
                 ),  # Much looser clustering to prevent speaker fragmentation
                 speaker_limit=cfg.get("speaker_limit", None),
+                clustering_backend=str(cfg.get("clustering_backend", "ahc")),
+                min_speakers=cfg.get("min_speakers", None),
+                max_speakers=cfg.get("max_speakers", None),
                 ecapa_model_path=ecapa_path,
                 vad_backend=cfg.get("vad_backend", "auto"),
                 # Allow CLI to tune VAD
@@ -681,6 +684,9 @@ class AudioAnalysisPipelineV2:
 
         # Timeline
         write_timeline_csv(outp / "timeline.csv", segments_final)
+
+        # Human-readable transcript
+        write_human_transcript(outp / "diarized_transcript_readable.txt", segments_final)
 
         # QC report
         write_qc_report(

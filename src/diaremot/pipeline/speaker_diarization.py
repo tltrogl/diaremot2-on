@@ -62,6 +62,11 @@ except Exception:
         # Unreachable return to satisfy static analysis
         return None
 
+# Optional spectral clustering backend (CPU)
+try:  # pragma: no cover - optional dependency
+    from spectralcluster import SpectralClusterer as _SpectralClusterer  # type: ignore
+except Exception:  # pragma: no cover - best effort import
+    _SpectralClusterer = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -147,6 +152,9 @@ class DiarizationConfig:
     ahc_linkage: str = "average"
     ahc_distance_threshold: float = 0.15
     speaker_limit: int | None = None
+    clustering_backend: str = "ahc"  # 'ahc' | 'spectral'
+    min_speakers: int | None = None
+    max_speakers: int | None = None
     # Post-processing
     collar_sec: float = 0.25
     min_turn_sec: float = 1.50
@@ -165,6 +173,11 @@ class DiarizationConfig:
     allow_energy_vad_fallback: bool = True
     energy_gate_db: float = -33.0
     energy_hop_sec: float = 0.01
+    # Single-speaker collapse heuristic
+    single_speaker_collapse: bool = True
+    single_speaker_dominance: float = 0.88
+    single_speaker_centroid_threshold: float = 0.08
+    single_speaker_min_turns: int = 3
 
 
 @dataclass
@@ -176,6 +189,77 @@ class DiarizedTurn:
     candidate_name: str | None = None
     needs_review: bool = False
     embedding: np.ndarray | None = None
+
+
+def collapse_single_speaker_turns(
+    turns: list[DiarizedTurn],
+    *,
+    dominance_threshold: float = 0.88,
+    centroid_threshold: float = 0.08,
+    min_turns: int = 3,
+) -> tuple[bool, str | None, str | None]:
+    """Collapse fragmented speaker labels into a single speaker when evidence strongly supports one talker."""
+    if not turns or len(turns) <= 1:
+        return False, None, None
+    if min_turns > 1 and len(turns) < min_turns:
+        return False, None, None
+    speakers = {t.speaker for t in turns if t.speaker}
+    if len(speakers) <= 1:
+        return False, next(iter(speakers), None), None
+    durations: dict[str, float] = {}
+    total_duration = 0.0
+    for t in turns:
+        dur = max(float(t.end) - float(t.start), 0.0)
+        durations[t.speaker] = durations.get(t.speaker, 0.0) + dur
+        total_duration += dur
+    if total_duration <= 0.0:
+        return False, None, None
+    dominant_speaker, dominant_duration = max(durations.items(), key=lambda item: item[1])
+    dominance_ratio = dominant_duration / total_duration
+    collapse_reason: str | None = None
+    collapse = False
+    if dominance_threshold > 0 and dominance_ratio >= dominance_threshold and len(durations) > 1:
+        collapse = True
+        collapse_reason = f"dominance={dominance_ratio:.2f}"
+    if not collapse and centroid_threshold > 0:
+        by_speaker: dict[str, list[np.ndarray]] = {}
+        for t in turns:
+            if t.embedding is None:
+                continue
+            by_speaker.setdefault(t.speaker, []).append(np.asarray(t.embedding, dtype=np.float32))
+        by_speaker = {k: v for k, v in by_speaker.items() if v}
+        if len(by_speaker) >= 2:
+            def centroid(vecs: list[np.ndarray]) -> np.ndarray:
+                arr = np.vstack(vecs)
+                c = arr.mean(axis=0)
+                n = np.linalg.norm(c)
+                return c / (n + 1e-9)
+
+            centroids = {spk: centroid(vecs) for spk, vecs in by_speaker.items()}
+            max_distance = 0.0
+            keys = list(centroids.keys())
+            for i in range(len(keys)):
+                for j in range(i + 1, len(keys)):
+                    a = centroids[keys[i]]
+                    b = centroids[keys[j]]
+                    denom = np.linalg.norm(a) * np.linalg.norm(b) + 1e-9
+                    if denom <= 0:
+                        continue
+                    distance = 1.0 - float(np.dot(a, b) / denom)
+                    if distance > max_distance:
+                        max_distance = distance
+            if max_distance <= centroid_threshold and len(keys) > 1:
+                collapse = True
+                collapse_reason = f"max_centroid_dist={max_distance:.3f}"
+    if not collapse:
+        return False, None, None
+    canonical = dominant_speaker or "Speaker_1"
+    if not canonical or canonical.lower() in {"", "none", "null"}:
+        canonical = "Speaker_1"
+    for turn in turns:
+        turn.speaker = canonical
+        turn.speaker_name = canonical
+    return True, canonical, collapse_reason
 
 
 class _SileroWrapper:
@@ -877,20 +961,52 @@ class SpeakerDiarizer:
             return []
         try:
             X = np.vstack(embeddings)
-            if self.config.speaker_limit:
-                clusterer = _agglo(
-                    distance_threshold=None,
-                    n_clusters=self.config.speaker_limit,
-                    linkage=self.config.ahc_linkage,
-                    metric="cosine",
-                )
-            else:
-                clusterer = _agglo(
-                    distance_threshold=self.config.ahc_distance_threshold,
-                    linkage=self.config.ahc_linkage,
-                    metric="cosine",
-                )
-            labels = clusterer.fit_predict(X)
+            backend = (self.config.clustering_backend or "ahc").strip().lower()
+            labels = None
+            if backend == "spectral" and _SpectralClusterer is not None:
+                # Spectral clustering with optional min/max bounds.
+                min_c = None
+                max_c = None
+                if self.config.speaker_limit and int(self.config.speaker_limit) > 0:
+                    min_c = max_c = int(self.config.speaker_limit)
+                else:
+                    if self.config.min_speakers is not None:
+                        min_c = int(self.config.min_speakers)
+                    if self.config.max_speakers is not None:
+                        max_c = int(self.config.max_speakers)
+                try:
+                    spec = _SpectralClusterer(
+                        min_clusters=min_c if min_c is not None else 1,
+                        max_clusters=max_c if max_c is not None else None,
+                        p_percentile=0.90,
+                        gaussian_blur_sigma=1.0,
+                    )
+                    labels = spec.fit_predict(X)
+                    logger.info(
+                        "Spectral clustering assigned %d clusters (min=%s max=%s)",
+                        int(len(set(labels))), str(min_c), str(max_c),
+                    )
+                except Exception as e:  # fall back to AHC on failure
+                    logger.info(f"Spectral clustering failed ({e}); falling back to AHC")
+                    labels = None
+            if labels is None:
+                if backend == "spectral" and _SpectralClusterer is None:
+                    logger.info("spectralcluster not installed; falling back to AHC")
+                # Default AHC
+                if self.config.speaker_limit:
+                    clusterer = _agglo(
+                        distance_threshold=None,
+                        n_clusters=self.config.speaker_limit,
+                        linkage=self.config.ahc_linkage,
+                        metric="cosine",
+                    )
+                else:
+                    clusterer = _agglo(
+                        distance_threshold=self.config.ahc_distance_threshold,
+                        linkage=self.config.ahc_linkage,
+                        metric="cosine",
+                    )
+                labels = clusterer.fit_predict(X)
         except Exception as e:
             logger.error(f"Clustering failed: {e}")
             labels = np.zeros(len(embeddings), dtype=int)
@@ -905,6 +1021,21 @@ class SpeakerDiarizer:
         turns = self._enforce_min_turn_duration(turns)
         # Merge highly-similar speaker clusters using centroid cosine similarity
         turns = self._merge_similar_speakers(turns)
+        if self.config.single_speaker_collapse:
+            collapsed, canonical, reason = collapse_single_speaker_turns(
+                turns,
+                dominance_threshold=self.config.single_speaker_dominance,
+                centroid_threshold=self.config.single_speaker_centroid_threshold,
+                min_turns=self.config.single_speaker_min_turns,
+            )
+            if collapsed:
+                msg_reason = f" ({reason})" if reason else ""
+                logger.info(
+                    "Collapsing diarization clusters into single speaker '%s'%s",
+                    canonical,
+                    msg_reason,
+                )
+                turns = self._merge_short_gaps(turns)
         # Final pass to stitch adjacent segments after relabeling
         turns = self._merge_short_gaps(turns)
         turns = self._assign_speaker_names(turns)

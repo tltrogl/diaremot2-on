@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from ..logging_utils import StageGuard, _fmt_hms
 from ..pipeline_checkpoint_system import ProcessingStage
 from .base import PipelineState
-from .utils import compute_audio_sha16, compute_audio_sha16_from_file, compute_pp_signature, read_json_safe
+from .utils import (
+    compute_audio_sha16,
+    compute_audio_sha16_from_file,
+    compute_pp_signature,
+    read_json_safe,
+)
+
+if TYPE_CHECKING:
+    from ..orchestrator import AudioAnalysisPipelineV2
 
 __all__ = ["run_preprocess", "run_background_sed"]
 

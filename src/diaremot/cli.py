@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import array
+import json
 import math
 import shutil
 import subprocess
@@ -31,7 +31,7 @@ def _core():
         return import_module("audio_pipeline_core")
 
 
-def core_build_config(overrides: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+def core_build_config(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     return _core().build_pipeline_config(overrides)
 
 
@@ -70,7 +70,7 @@ BUILTIN_PROFILES: dict[str, dict[str, Any]] = {
 }
 
 
-def _load_profile(profile: Optional[str]) -> dict[str, Any]:
+def _load_profile(profile: str | None) -> dict[str, Any]:
     if not profile:
         return {}
 
@@ -93,13 +93,13 @@ def _load_profile(profile: Optional[str]) -> dict[str, Any]:
     return data
 
 
-def _normalise_path(value: Optional[Path]) -> Optional[str]:
+def _normalise_path(value: Path | None) -> str | None:
     if value is None:
         return None
     return str(value.expanduser().resolve())
 
 
-def _parse_min_dur_map(value: Optional[str]) -> Optional[dict[str, float]]:
+def _parse_min_dur_map(value: str | None) -> dict[str, float] | None:
     if value is None:
         return None
     text = value.strip()
@@ -263,7 +263,7 @@ def _common_options(**kwargs: Any) -> dict[str, Any]:
     return overrides
 
 
-def _assemble_config(profile: Optional[str], cli_overrides: dict[str, Any]) -> dict[str, Any]:
+def _assemble_config(profile: str | None, cli_overrides: dict[str, Any]) -> dict[str, Any]:
     profile_overrides = _load_profile(profile)
     merged = _merge_configs(profile_overrides, _common_options(**cli_overrides))
     return core_build_config(merged)
@@ -273,7 +273,7 @@ def _generate_sample_audio(
     target: Path,
     duration: float,
     sample_rate: int,
-    ffmpeg_bin: Optional[str] = None,
+    ffmpeg_bin: str | None = None,
 ) -> str:
     """Generate a sine-wave sample clip for smoke testing."""
 
@@ -302,8 +302,7 @@ def _generate_sample_audio(
             subprocess.run(
                 command,
                 check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
             )
             return "ffmpeg"
         except (FileNotFoundError, subprocess.CalledProcessError):
@@ -335,7 +334,7 @@ def _generate_sample_audio(
 def run(
     input: Path = typer.Option(..., "--input", "-i", help="Path to input audio file."),
     outdir: Path = typer.Option(..., "--outdir", "-o", help="Directory to write outputs."),
-    profile: Optional[str] = typer.Option(
+    profile: str | None = typer.Option(
         None,
         "--profile",
         help=f"Configuration profile to load ({', '.join(BUILTIN_PROFILES)} or path to JSON).",
@@ -346,14 +345,23 @@ def run(
     ahc_distance_threshold: float = typer.Option(
         0.15, help="Agglomerative clustering distance threshold."
     ),
-    speaker_limit: Optional[int] = typer.Option(None, help="Maximum number of speakers to keep."),
+    speaker_limit: int | None = typer.Option(None, help="Maximum number of speakers to keep."),
+    clustering_backend: str = typer.Option(
+        "ahc", help="Clustering backend: 'ahc' or 'spectral'."
+    ),
+    min_speakers: int | None = typer.Option(
+        None, help="Minimum speakers (for spectral clustering)."
+    ),
+    max_speakers: int | None = typer.Option(
+        None, help="Maximum speakers (for spectral clustering)."
+    ),
     whisper_model: str = typer.Option(
         str(DEFAULT_WHISPER_MODEL), help="Whisper/Faster-Whisper model identifier."
     ),
     asr_backend: str = typer.Option("faster", help="ASR backend", show_default=True),
     asr_compute_type: str = typer.Option("float32", help="CT2 compute type for faster-whisper."),
     asr_cpu_threads: int = typer.Option(1, help="CPU threads for ASR backend."),
-    language: Optional[str] = typer.Option(None, help="Override ASR language"),
+    language: str | None = typer.Option(None, help="Override ASR language"),
     language_mode: str = typer.Option("auto", help="Language detection mode"),
     ignore_tx_cache: bool = typer.Option(
         False,
@@ -374,16 +382,16 @@ def run(
         is_flag=True,
     ),
     affect_backend: str = typer.Option("onnx", help="Affect backend (auto/torch/onnx)."),
-    affect_text_model_dir: Optional[Path] = typer.Option(
+    affect_text_model_dir: Path | None = typer.Option(
         None, help="Path to GoEmotions model directory."
     ),
-    affect_intent_model_dir: Optional[Path] = typer.Option(
+    affect_intent_model_dir: Path | None = typer.Option(
         None, help="Path to intent model directory."
     ),
-    affect_ser_model_dir: Optional[Path] = typer.Option(
+    affect_ser_model_dir: Path | None = typer.Option(
         None, help="Path to speech emotion model directory."
     ),
-    affect_vad_model_dir: Optional[Path] = typer.Option(
+    affect_vad_model_dir: Path | None = typer.Option(
         None, help="Path to valence/arousal/dominance model directory."
     ),
     beam_size: int = typer.Option(1, help="Beam size for ASR decoding."),
@@ -405,12 +413,12 @@ def run(
     sed_hop_sec: float = typer.Option(0.5, help="Timeline SED hop length (seconds)."),
     sed_enter: float = typer.Option(0.50, help="Timeline SED hysteresis enter threshold."),
     sed_exit: float = typer.Option(0.35, help="Timeline SED hysteresis exit threshold."),
-    sed_min_dur: Optional[str] = typer.Option(
+    sed_min_dur: str | None = typer.Option(
         None,
         help="JSON or comma list mapping collapsed labels to minimum event duration seconds.",
     ),
     sed_merge_gap: float = typer.Option(0.20, help="Merge SED events separated by <= gap seconds."),
-    sed_classmap: Optional[Path] = typer.Option(
+    sed_classmap: Path | None = typer.Option(
         None,
         help="Optional CSV mapping AudioSet labels to collapsed groups for timeline SED.",
     ),
@@ -419,7 +427,7 @@ def run(
         "--sed-write-jsonl/--sed-no-jsonl",
         help="Write per-frame SED debug JSONL alongside events timeline.",
     ),
-    chunk_enabled: Optional[bool] = typer.Option(
+    chunk_enabled: bool | None = typer.Option(
         None,
         "--chunk-enabled",
         help="Set automatic chunking of long files (true/false).",
@@ -460,6 +468,9 @@ def run(
         "registry_path": _normalise_path(registry_path),
         "ahc_distance_threshold": ahc_distance_threshold,
         "speaker_limit": speaker_limit,
+        "clustering_backend": clustering_backend,
+        "min_speakers": min_speakers,
+        "max_speakers": max_speakers,
         "whisper_model": whisper_model,
         "asr_backend": asr_backend,
         "asr_compute_type": asr_compute_type,
@@ -533,7 +544,7 @@ def smoke(
     outdir: Path = typer.Option(
         ..., "--outdir", "-o", help="Directory to write smoke test outputs."
     ),
-    profile: Optional[str] = typer.Option(
+    profile: str | None = typer.Option(
         None,
         "--profile",
         help=f"Optional configuration profile ({', '.join(BUILTIN_PROFILES)} or path).",
@@ -545,7 +556,7 @@ def smoke(
         "--disable-affect/--enable-affect",
         help="Disable affect stages for a faster smoke test run.",
     ),
-    ffmpeg_bin: Optional[Path] = typer.Option(
+    ffmpeg_bin: Path | None = typer.Option(
         None,
         "--ffmpeg-bin",
         help="Explicit ffmpeg binary to synthesise the audio (defaults to PATH lookup).",
@@ -615,7 +626,7 @@ def resume(
     outdir: Path = typer.Option(
         ..., "--outdir", "-o", help="Output directory used in the previous run."
     ),
-    profile: Optional[str] = typer.Option(
+    profile: str | None = typer.Option(
         None,
         "--profile",
         help=f"Configuration profile to load ({', '.join(BUILTIN_PROFILES)} or path to JSON).",
@@ -626,14 +637,14 @@ def resume(
     ahc_distance_threshold: float = typer.Option(
         0.15, help="Agglomerative clustering distance threshold."
     ),
-    speaker_limit: Optional[int] = typer.Option(None, help="Maximum number of speakers to keep."),
+    speaker_limit: int | None = typer.Option(None, help="Maximum number of speakers to keep."),
     whisper_model: str = typer.Option(
         str(DEFAULT_WHISPER_MODEL), help="Whisper/Faster-Whisper model identifier."
     ),
     asr_backend: str = typer.Option("faster", help="ASR backend", show_default=True),
     asr_compute_type: str = typer.Option("float32", help="CT2 compute type for faster-whisper."),
     asr_cpu_threads: int = typer.Option(1, help="CPU threads for ASR backend."),
-    language: Optional[str] = typer.Option(None, help="Override ASR language"),
+    language: str | None = typer.Option(None, help="Override ASR language"),
     language_mode: str = typer.Option("auto", help="Language detection mode"),
     quiet: bool = typer.Option(
         False,
@@ -648,16 +659,16 @@ def resume(
         is_flag=True,
     ),
     affect_backend: str = typer.Option("onnx", help="Affect backend (auto/torch/onnx)."),
-    affect_text_model_dir: Optional[Path] = typer.Option(
+    affect_text_model_dir: Path | None = typer.Option(
         None, help="Path to GoEmotions model directory."
     ),
-    affect_intent_model_dir: Optional[Path] = typer.Option(
+    affect_intent_model_dir: Path | None = typer.Option(
         None, help="Path to intent model directory."
     ),
-    affect_ser_model_dir: Optional[Path] = typer.Option(
+    affect_ser_model_dir: Path | None = typer.Option(
         None, help="Path to speech emotion model directory."
     ),
-    affect_vad_model_dir: Optional[Path] = typer.Option(
+    affect_vad_model_dir: Path | None = typer.Option(
         None, help="Path to valence/arousal/dominance model directory."
     ),
     beam_size: int = typer.Option(1, help="Beam size for ASR decoding."),
@@ -674,7 +685,7 @@ def resume(
         "--enable-sed/--disable-sed",
         help="Toggle background sound event detection stage.",
     ),
-    chunk_enabled: Optional[bool] = typer.Option(
+    chunk_enabled: bool | None = typer.Option(
         None,
         "--chunk-enabled",
         help="Set automatic chunking of long files (true/false).",

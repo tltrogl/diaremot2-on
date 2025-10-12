@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -47,6 +47,9 @@ class PipelineState:
 
 
 StageRunner = Callable[["AudioAnalysisPipelineV2", PipelineState, Any], None]
+
+if TYPE_CHECKING:
+    from ..orchestrator import AudioAnalysisPipelineV2
 
 
 @dataclass(frozen=True)

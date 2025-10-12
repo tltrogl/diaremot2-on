@@ -186,6 +186,103 @@ def write_qc_report(
     )
 
 
+def _format_hms(seconds: Any) -> str:
+    try:
+        value = float(seconds)
+    except (TypeError, ValueError):
+        return "--:--:--"
+    if value < 0:
+        value = 0.0
+    total_seconds = int(round(value))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def _parse_json_blob(blob: Any) -> Any:
+    if isinstance(blob, (dict, list)):
+        return blob
+    if isinstance(blob, str) and blob.strip():
+        try:
+            return json.loads(blob)
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _format_float(value: Any, *, signed: bool = False) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+    fmt = "{:+.2f}" if signed else "{:.2f}"
+    return fmt.format(number)
+
+
+def write_human_transcript(path: Path, segments: list[dict[str, Any]]) -> None:
+    """Render a human-friendly transcript with diarization context."""
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines: list[str] = []
+    if not segments:
+        lines.append("No speech segments detected.")
+    else:
+        for index, segment in enumerate(segments, start=1):
+            start = _format_hms(segment.get("start"))
+            end = _format_hms(segment.get("end"))
+            speaker = (
+                str(segment.get("speaker_name"))
+                if segment.get("speaker_name")
+                else str(segment.get("speaker_id") or f"Speaker_{index:02d}")
+            )
+            lines.append(f"[{start} - {end}] {speaker}")
+
+            text = (segment.get("text") or "").strip()
+            lines.append(f"  Text: {text or '(no speech recognized)'}")
+
+            valence = _format_float(segment.get("valence"), signed=True)
+            arousal = _format_float(segment.get("arousal"), signed=True)
+            dominance = _format_float(segment.get("dominance"), signed=True)
+            emotion = segment.get("emotion_top") or "unknown"
+            affect_hint = segment.get("affect_hint") or "n/a"
+            lines.append(
+                f"  Affect: emotion {emotion}; valence {valence}, "
+                f"arousal {arousal}, dominance {dominance}; hint {affect_hint}"
+            )
+
+            intent = segment.get("intent_top") or "unknown"
+            intents_blob = _parse_json_blob(segment.get("intent_top3_json"))
+            if isinstance(intents_blob, list):
+                intent_detail = ", ".join(
+                    f"{item.get('label', 'unknown')} {float(item.get('score', 0.0)):.2f}"
+                    for item in intents_blob[:3]
+                    if isinstance(item, dict)
+                )
+            else:
+                intent_detail = "n/a"
+            lines.append(f"  Intent: {intent} (top3: {intent_detail})")
+
+            sed_blob = _parse_json_blob(segment.get("events_top3_json"))
+            sed_labels = (
+                [item.get("label", "unknown") for item in sed_blob if isinstance(item, dict)]
+                if isinstance(sed_blob, list)
+                else []
+            )
+            sed_summary = ", ".join(sed_labels) if sed_labels else "n/a"
+            noise = segment.get("noise_tag") or "n/a"
+            vad_status = "unstable" if segment.get("vad_unstable") else "stable"
+            lines.append(f"  VAD: {vad_status} | SED: {sed_summary} | Noise tag: {noise}")
+
+            duration = _format_float(segment.get("duration_s"))
+            wpm = _format_float(segment.get("wpm"))
+            lines.append(f"  Duration: {duration}s | Speech rate: {wpm} wpm")
+            lines.append("")  # blank line between segments
+
+    path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+
+
 def write_speakers_summary(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
@@ -208,5 +305,6 @@ __all__ = [
     "write_segments_jsonl",
     "write_timeline_csv",
     "write_qc_report",
+    "write_human_transcript",
     "write_speakers_summary",
 ]

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Quick ECAPA ONNX model loading test."""
-import sys
 import os
+import sys
 
 # Ensure we can import from src
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))

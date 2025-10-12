@@ -25,8 +25,6 @@ def __getattr__(name: str) -> ModuleType:
         return module
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-+
-
 
 def __dir__() -> list[str]:
     """Expose lazy submodules through :func:`dir`."""
