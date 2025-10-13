@@ -8,8 +8,6 @@ src/diaremot.egg-info/dependency_links.txt
 src/diaremot.egg-info/entry_points.txt
 src/diaremot.egg-info/requires.txt
 src/diaremot.egg-info/top_level.txt
-src/diaremot2_on/__init__.py
-src/diaremot2_on/diarization.py
 src/diaremot/affect/__init__.py
 src/diaremot/affect/emotion_analysis.py
 src/diaremot/affect/emotion_analyzer.py
@@ -72,5 +70,7 @@ src/diaremot/tools/deps_check.py
 src/diaremot/utils/__init__.py
 src/diaremot/utils/hash.py
 src/diaremot/utils/model_paths.py
+src/diaremot2_on/__init__.py
+src/diaremot2_on/diarization.py
 tests/test_diarization.py
 tests/test_outputs_transcript.py
