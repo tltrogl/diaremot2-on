@@ -1,0 +1,82 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Cache directories
+.cache/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Output directories
+outputs/
+out_noisy/
+dan1_output/
+
+# Test data (keep fixtures)
+tests/fixtures/*.wav
+
+# Checkpoints
+checkpoints/
+test_checkpoints/
+
+# Models (too large, should be mounted)
+models/
+*.onnx
+*.zip
+
+# Documentation drafts
+*.md.bak
+AGENTS*.md
+CLAUDE.md
+DOCUMENTATION*.md
+
+# Temp files
+tmp_*.py
+temp_*.py
+*.bak
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Archive files
+*.zip
+*.tar.gz
+*.7z
+
+# Other
+speaker_registry.json
+*.code-workspace
+New Text Document.txt
