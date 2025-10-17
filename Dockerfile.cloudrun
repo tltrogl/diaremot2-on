@@ -1,0 +1,56 @@
+# Cloud Run optimized Dockerfile for diaremot2-on
+# Runs as HTTP service with FastAPI
+
+ARG PYTHON_VERSION=3.11
+
+FROM python:${PYTHON_VERSION}-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python packages
+COPY requirements.txt requirements.in ./
+RUN python -m pip install --upgrade pip wheel setuptools && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir fastapi uvicorn[standard] python-multipart
+
+# Copy source code
+COPY src/ ./src/
+COPY pyproject.toml README.md ./
+
+# Install package
+RUN pip install --no-cache-dir -e .
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PORT=8080 \
+    DIAREMOT_MODEL_DIR=/srv/models \
+    HF_HOME=/tmp/.cache \
+    HUGGINGFACE_HUB_CACHE=/tmp/.cache/hub \
+    TRANSFORMERS_CACHE=/tmp/.cache/transformers \
+    TORCH_HOME=/tmp/.cache/torch \
+    OMP_NUM_THREADS=4 \
+    MKL_NUM_THREADS=4 \
+    NUMEXPR_MAX_THREADS=4 \
+    TOKENIZERS_PARALLELISM=false
+
+# Create directories with proper permissions
+RUN mkdir -p /srv/models /tmp/outputs /tmp/.cache && \
+    chmod -R 777 /tmp
+
+# Cloud Run runs as non-root user
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+# Expose port
+EXPOSE 8080
+
+
+# Run FastAPI server
+CMD ["python", "-m", "uvicorn", "diaremot.api:app", "--host", "0.0.0.0", "--port", "8080"]

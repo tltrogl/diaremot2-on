@@ -17,6 +17,17 @@ DiaRemot is a production-ready, CPU-only speech intelligence system that process
 
 ---
 
+## Documentation
+
+- **README.md** (this file) - User guide and reference
+- **DATAFLOW.md** - Detailed pipeline data flow documentation
+- **MODEL_MAP.md** - Complete model inventory and search paths
+- **GEMINI.md** - Project context for AI assistants (Gemini, Claude, etc.)
+- **AGENTS.md** - Setup guide for autonomous agents
+- **CLOUD_BUILD_GUIDE.md** - Cloud deployment instructions
+
+---
+
 ## 11-Stage Processing Pipeline
 
 1. **dependency_check** – Validate runtime dependencies and model availability
@@ -31,13 +42,63 @@ DiaRemot is a production-ready, CPU-only speech intelligence system that process
 10. **speaker_rollups** – Per-speaker statistical summaries
 11. **outputs** – Generate CSV, JSON, HTML, PDF reports
 
+### Data Flow Diagram
+
+```
+Audio File (WAV/MP3/M4A)
+    ↓
+[1] dependency_check → Validate environment
+    ↓
+[2] preprocess → 16kHz mono, -20 LUFS, denoise, auto-chunk
+    ↓ {y, sr, duration_s, health, audio_sha16}
+    ↓
+[3] background_sed → PANNs CNN14 (global + timeline if noisy)
+    ↓ {sed_info: top labels, dominant_label, noise_score, timeline?}
+    ↓
+[4] diarize → Silero VAD + ECAPA embeddings + AHC clustering
+    ↓ {turns: [{start, end, speaker, speaker_name}], vad_unstable}
+    ↓
+[5] transcribe → Faster-Whisper with intelligent batching
+    ↓ {norm_tx: [{start, end, speaker, text, asr_logprob_avg}]}
+    ↓
+[6] paralinguistics → Praat (jitter/shimmer/HNR/CPPS) + prosody (WPM/F0/pauses)
+    ↓ {para_map: {seg_idx: {wpm, f0_mean_hz, vq_jitter_pct, ...}}}
+    ↓
+[7] affect_and_assemble → Audio (VAD+SER8) + Text (GoEmotions+BART-MNLI) + SED context
+    ↓ {segments_final: 39 columns per segment}
+    ↓
+[8] overlap_interruptions → Detect overlaps + classify interruptions
+    ↓ {overlap_stats, per_speaker_interrupts}
+    ↓
+[9] conversation_analysis → Turn-taking + dominance + flow metrics
+    ↓ {conv_metrics: ConversationMetrics}
+    ↓
+[10] speaker_rollups → Aggregate per-speaker stats
+    ↓ {speakers_summary: [{speaker, duration, affect, voice_quality, ...}]}
+    ↓
+[11] outputs → Write CSV/JSONL/HTML/PDF/QC reports
+    ↓
+Output Files:
+  • diarized_transcript_with_emotion.csv (39 columns)
+  • segments.jsonl
+  • timeline.csv
+  • diarized_transcript_readable.txt
+  • summary.html
+  • summary.pdf
+  • qc_report.json
+  • speakers_summary.csv
+  • events_timeline.csv (if SED ran)
+```
+
+> **Detailed Documentation:** See [DATAFLOW.md](DATAFLOW.md) for complete stage-by-stage data flow, data structures, cache strategy, and error handling
+
 ---
 
 ## Output Files
 
 ### Primary Outputs
 
-**`diarized_transcript_with_emotion.csv`** - 39-column master transcript
+**`diarized_transcript_with_emotion.csv`** - 40-column master transcript
 - **Temporal**: start, end, duration_s
 - **Speaker**: speaker_id, speaker_name
 - **Content**: text, asr_logprob_avg
@@ -79,7 +140,7 @@ DiaRemot is a production-ready, CPU-only speech intelligence system that process
 ### Prerequisites
 
 **Required:**
-- Python 3.11+
+- Python 3.11 or 3.12 (3.13+ not yet supported)
 - FFmpeg on PATH (`ffmpeg -version` must work)
 - 4+ GB RAM
 - 4+ CPU cores (recommended)
@@ -89,10 +150,21 @@ DiaRemot is a production-ready, CPU-only speech intelligence system that process
 
 ### Quick Start (Windows)
 
+**Option 1: Automated Setup (Recommended)**
+```powershell
+# Clone repository
+git clone <repository-url>
+cd diaremot2-on
+
+# Run setup script
+.\setup.ps1
+```
+
+**Option 2: Manual Setup**
 ```powershell
 # 1. Clone repository
-git clone https://github.com/your-org/diaremot2-ai.git
-cd diaremot2-ai
+git clone <repository-url>
+cd diaremot2-on
 
 # 2. Create virtual environment
 py -3.11 -m venv .venv
@@ -100,43 +172,51 @@ py -3.11 -m venv .venv
 
 # 3. Install dependencies
 python -m pip install -U pip wheel setuptools
-pip install -r requirements.txt
-
-# 4. Install PyTorch CPU (requires special index)
-pip install --index-url https://download.pytorch.org/whl/cpu torch==2.4.1+cpu
-
-
-# 5. Install package
 pip install -e .
 
-# 6. Verify installation
-python -m diaremot.cli diagnostics
-```
+# 4. Install PyTorch CPU (if needed)
+pip install --index-url https://download.pytorch.org/whl/cpu torch
 
-**Alternatively, use the provided setup script:**
-```powershell
-.\setup.ps1
+# 5. Verify installation
+python -m diaremot.cli diagnostics
 ```
 
 ### Quick Start (Linux/macOS)
 
+**Option 1: Automated Setup (Recommended)**
+```bash
+# Clone repository
+git clone <repository-url>
+cd diaremot2-on
+
+# Make setup script executable and run
+chmod +x setup.sh
+./setup.sh
+```
+
+**Option 2: Manual Setup**
 ```bash
 # 1. Clone repository
-git clone https://github.com/your-org/diaremot2-ai.git
-cd diaremot2-ai
+git clone <repository-url>
+cd diaremot2-on
 
-# 2. Run setup script (handles everything)
-./setup.sh
+# 2. Create virtual environment
+python3.11 -m venv .venv
+source .venv/bin/activate
 
-# 3. Verify installation
+# 3. Install dependencies
+pip install -U pip wheel setuptools
+pip install -e .
+
+# 4. Verify installation
 python -m diaremot.cli diagnostics
 ```
 
 ### Development Setup
 
 ```bash
-# Install dev tools
-pip install ruff pytest mypy
+# Install with dev dependencies
+pip install -e ".[dev]"
 
 # Run tests
 pytest tests/ -v
@@ -144,7 +224,7 @@ pytest tests/ -v
 # Lint code
 ruff check src/ tests/
 
-# Type check (if configured)
+# Type check
 mypy src/
 ```
 
@@ -173,12 +253,23 @@ export NUMEXPR_MAX_THREADS=4
 export TOKENIZERS_PARALLELISM=false
 ```
 
-### Model Search Paths (in priority order)
+### Model Search Paths
 
-1. `$DIAREMOT_MODEL_DIR` (if set)
-2. `D:/models` (Windows) or `/srv/models` (Linux)
-3. `./models` (project directory)
-4. `$HOME/models`
+DiaRemot uses a priority-based model discovery system. For each model, the system searches these locations in order:
+
+**Priority Order:**
+1. Explicit environment variable (if set) - e.g., `SILERO_VAD_ONNX_PATH`
+2. `$DIAREMOT_MODEL_DIR` (if set)
+3. Current working directory: `./models`
+4. User home directory: `~/models` or `%USERPROFILE%\models`
+5. OS-specific defaults:
+   - **Windows**: `D:/models`, `D:/diaremot/diaremot2-1/models`
+   - **Linux/Mac**: `/models`, `/opt/diaremot/models`
+
+**How It Works:**
+- Pipeline searches relative paths under each root (e.g., `Diarization/ecapa-onnx/ecapa_tdnn.onnx`)
+- First existing file wins
+- If no ONNX found, falls back to PyTorch (slower, auto-downloads)
 
 ---
 
@@ -186,106 +277,191 @@ export TOKENIZERS_PARALLELISM=false
 
 ### Required ONNX Models (~2.8GB total)
 
-Models must be placed in your model directory (default: `D:/models` on Windows, `/srv/models` on Linux):
+**ACTUAL MODEL DIRECTORY STRUCTURE** (v2.2.0):
+
+The structure below shows what the code actually searches for and expects. **All models must be in subdirectories** - there are no root-level ONNX files.
 
 ```
-D:/models/                              # Windows
-├── silero_vad.onnx                    # ~3MB   | Silero VAD
-├── ecapa_tdnn.onnx                    # ~7MB   | ECAPA speaker embeddings (legacy location)
+D:/models/                                      # Windows default
+/srv/models/                                    # Linux default
 │
-├── Diarization/
-│   └── ecapa-onnx/
-│       └── ecapa_tdnn.onnx            # ~7MB   | Speaker embeddings (preferred)
-│
-├── Affect/
-│   ├── ser8/
-│   │   ├── model.onnx                 # ~100MB | Speech emotion recognition (8 classes)
-│   │   ├── model.int8.onnx           # ~50MB  | Quantized version (optional)
-│   │   ├── config.json
-│   │   ├── vocab.json
-│   │   └── tokenizer configs...
+├── Diarization/                                # Speaker diarization models
+│   ├── ecapa-onnx/
+│   │   └── ecapa_tdnn.onnx                    # ~7MB   | ECAPA speaker embeddings
+│   │                                          # Search: Diarization/ecapa-onnx/ecapa_tdnn.onnx
+│   │                                          #         OR ecapa_onnx/ecapa_tdnn.onnx
+│   │                                          #         OR ecapa_tdnn.onnx (root fallback)
+│   │                                          # Env:    ECAPA_ONNX_PATH
 │   │
-│   ├── VAD_dim/
-│   │   ├── model.onnx                 # ~500MB | Valence/Arousal/Dominance
-│   │   ├── config.json
-│   │   └── tokenizer configs...
-│   │
-│   └── sed_panns/
-│       ├── model.onnx                 # ~80MB  | PANNs CNN14 sound event detection
-│       └── class_labels_indices.csv   # ~12KB  | AudioSet 527-class labels
+│   └── silaro_vad/
+│       └── silero_vad.onnx                    # ~3MB   | Silero VAD
+│                                              # Search: silero_vad.onnx (multiple locations)
+│                                              #         OR silero/vad.onnx
+│                                              # Env:    SILERO_VAD_ONNX_PATH
 │
-├── text_emotions/
-│   ├── model.onnx                     # ~500MB | RoBERTa GoEmotions (28 emotions)
-│   ├── model.int8.onnx               # ~130MB | Quantized version (optional)
-│   ├── config.json
-│   ├── vocab.json
+├── Affect/                                     # Affect analysis models
+│   ├── ser8/                                  # Speech Emotion Recognition (8-class)
+│   │   ├── model.int8.onnx                   # ~50MB  | Quantized SER (PREFERRED)
+│   │   ├── model.onnx                         # ~200MB | Float32 SER (if available)
+│   │   ├── config.json                        # Required for tokenizer
+│   │   ├── preprocessor_config.json
+│   │   ├── special_tokens_map.json
+│   │   ├── tokenizer_config.json
+│   │   └── vocab.json
+│   │                                          # Search: ser8.int8.onnx
+│   │                                          #         OR model.onnx  
+│   │                                          #         OR ser_8class.onnx
+│   │                                          # Default: Affect/ser8/
+│   │                                          # Env:    DIAREMOT_SER_ONNX
+│   │
+│   ├── VAD_dim/                               # Valence/Arousal/Dominance
+│   │   ├── model.onnx                         # ~500MB | V/A/D regression model
+│   │   ├── config.json                        # Required for tokenizer
+│   │   ├── added_tokens.json
+│   │   ├── preprocessor_config.json
+│   │   ├── special_tokens_map.json
+│   │   ├── tokenizer_config.json
+│   │   └── vocab.json
+│   │                                          # Search: model.onnx
+│   │                                          #         OR vad_model.onnx
+│   │                                          # Default: Affect/VAD_dim/
+│   │                                          # Env:    AFFECT_VAD_DIM_MODEL_DIR
+│   │
+│   └── sed_panns/                             # Sound Event Detection (PANNs)
+│       ├── model.onnx                         # ~80MB  | PANNs CNN14
+│       └── class_labels_indices.csv           # ~12KB  | 527 AudioSet class labels
+│                                              # Search: cnn14.onnx + labels.csv
+│                                              #         OR panns_cnn14.onnx + audioset_labels.csv
+│                                              #         OR model.onnx + class_labels_indices.csv
+│                                              # Default: sed_panns/ OR panns/ OR panns_cnn14/
+│                                              # Env:    DIAREMOT_PANNS_DIR
+│
+├── text_emotions/                              # Text emotion classification
+│   ├── model.int8.onnx                        # ~130MB | GoEmotions quantized (PREFERRED)
+│   ├── model.onnx                             # ~500MB | GoEmotions float32 (if available)
+│   ├── config.json                            # Required for tokenizer
 │   ├── merges.txt
-│   └── tokenizer configs...
+│   ├── special_tokens_map.json
+│   ├── tokenizer.json
+│   ├── tokenizer_config.json
+│   └── vocab.json
+│                                              # Search: model.onnx
+│                                              #         OR roberta-base-go_emotions.onnx
+│                                              # Default: text_emotions/
+│                                              # Env:    DIAREMOT_TEXT_EMO_MODEL_DIR
 │
-└── intent/
-    ├── model_int8.onnx                # ~600MB | BART-MNLI intent classification (preferred)
-    ├── model_uint8.onnx              # ~600MB | Alternative quantization (optional)
-    ├── config.json
-    ├── vocab.json
-    ├── merges.txt
-    └── tokenizer configs...
+├── intent/                                     # Intent classification (zero-shot NLI)
+│   ├── model_int8.onnx                        # ~600MB | BART-MNLI quantized (PREFERRED)
+│   ├── model_uint8.onnx                       # ~600MB | Alternative quantization (if available)
+│   ├── model.onnx                             # ~1.5GB | Float32 (if available)
+│   ├── config.json                            # Required - must contain model_type
+│   ├── merges.txt                             # Required for tokenizer
+│   ├── special_tokens_map.json
+│   ├── tokenizer.json                         # Required OR vocab.json+merges.txt
+│   ├── tokenizer_config.json
+│   └── vocab.json
+│                                              # Search: model_uint8.onnx
+│                                              #         OR model.onnx
+│                                              #         OR any .onnx file
+│                                              # Default: intent/ OR bart/ OR bart-large-mnli/
+│                                              #         OR facebook/bart-large-mnli/
+│                                              # Env:    DIAREMOT_INTENT_MODEL_DIR
+│
+└── faster-whisper/                             # ASR models (auto-downloaded)
+    └── models--Systran--faster-whisper-tiny.en/
+        └── tiny.en/                           # CTranslate2 format
+            ├── config.json
+            ├── model.bin                      # ~40MB  | Whisper tiny.en quantized
+            ├── tokenizer.json
+            └── vocabulary.txt
+                                               # Auto-download location: HF_HOME/hub/
+                                               # Models: tiny.en, base.en, small.en, medium.en, large-v2
 ```
 
-> Note: Release v2.AI installs the quantized SER bundle at
-> `D:/models/Affect/ser8-onnx-int8/ser8.int8.onnx` (Windows) or
-> `/srv/models/Affect/ser8-onnx-int8/ser8.int8.onnx` (Linux). Legacy
-> `Affect/ser8/model.onnx` remains available for compatibility but is no longer the default.
+### Critical Notes on Model Files
+
+**What's Actually Present:**
+- ✅ **Quantized models only** for SER8, text emotions, and intent (no float32 versions)
+- ✅ **model.int8.onnx** is used for SER8 and text emotions (NOT `model.onnx`)
+- ✅ **model_int8.onnx** is used for intent (NOT `model_uint8.onnx`)
+- ✅ All models are in **subdirectories** - no root-level ONNX files
+- ✅ Tokenizer files (config.json, vocab.json, etc.) must be colocated with ONNX files
+
+**What's Missing from Common Docs:**
+- ❌ No `D:/models/silero_vad.onnx` (it's in `Diarization/silaro_vad/`)
+- ❌ No `D:/models/ecapa_tdnn.onnx` (it's in `Diarization/ecapa-onnx/`)
+- ❌ No float32 SER8 (`Affect/ser8/model.onnx` doesn't exist, only `.int8`)
+- ❌ No float32 text emotions (`text_emotions/model.onnx` doesn't exist, only `.int8`)
+- ❌ No uint8 intent model (`intent/model_uint8.onnx` doesn't exist, only `_int8`)
+
+### Model Search Behavior
+
+**Example: ECAPA Model Discovery**
+
+When loading ECAPA embeddings, the system searches:
+```python
+# Priority 1: Environment variable (if set)
+$ECAPA_ONNX_PATH
+
+# Priority 2-6: Search under each model root with these relative paths:
+1. ecapa_onnx/ecapa_tdnn.onnx
+2. Diarization/ecapa-onnx/ecapa_tdnn.onnx  # <-- DOCUMENTED PATH
+3. ecapa_tdnn.onnx
+
+# Model roots searched (in order):
+- $DIAREMOT_MODEL_DIR
+- ./models
+- ~/models
+- D:/models (Windows) or /models (Linux)
+```
+
+**Example: Silero VAD Discovery**
+
+```python
+# Priority 1: Environment variable
+$SILERO_VAD_ONNX_PATH
+
+# Priority 2-6: Search paths
+1. silero_vad.onnx
+2. silero/vad.onnx
+
+# Roots: (same priority as ECAPA)
+```
 
 ### Environment Variable Overrides
 
-Override specific model paths:
+Override specific model paths to skip search:
+
 ```bash
-# Individual model overrides
-export SILERO_VAD_ONNX_PATH=/path/to/silero_vad.onnx
-export ECAPA_ONNX_PATH=/path/to/ecapa_tdnn.onnx
-export DIAREMOT_SER_ONNX="D:/models/Affect/ser8-onnx-int8/ser8.int8.onnx"
+# Diarization models
+export SILERO_VAD_ONNX_PATH="D:/models/Diarization/silaro_vad/silero_vad.onnx"
+export ECAPA_ONNX_PATH="D:/models/Diarization/ecapa-onnx/ecapa_tdnn.onnx"
 
-# Affect model directory overrides
-export DIAREMOT_INTENT_MODEL_DIR=/path/to/intent
-```
+# Affect models (full directory paths, not specific files)
+export DIAREMOT_SER_ONNX="D:/models/Affect/ser8/model.int8.onnx"
+export DIAREMOT_TEXT_EMO_MODEL_DIR="D:/models/text_emotions"
+export AFFECT_VAD_DIM_MODEL_DIR="D:/models/Affect/VAD_dim"
+export DIAREMOT_INTENT_MODEL_DIR="D:/models/intent"
+export DIAREMOT_PANNS_DIR="D:/models/Affect/sed_panns"
 
-### Download Models
-
-**Method 1: Automated (Recommended)**
-```bash
-cd $DIAREMOT_MODEL_DIR
-wget https://github.com/tltrogl/diaremot2-ai/releases/download/v2.1/models.zip
-sha256sum models.zip  # Verify checksum from release page
-unzip -q models.zip
-```
-
-**Method 2: Python Download Utility**
-```python
-from pathlib import Path
-from diaremot.io.download_utils import download_file
-
-models_dir = Path("D:/models")  # or Path("/srv/models") on Linux
-models_dir.mkdir(parents=True, exist_ok=True)
-
-download_file(
-    url="https://github.com/tltrogl/diaremot2-ai/releases/download/v2.1/models.zip",
-    destination=models_dir / "models.zip",
-    timeout=300
-)
+# Model root (affects all relative paths)
+export DIAREMOT_MODEL_DIR="D:/models"
 ```
 
 ### CTranslate2 Models (Auto-downloaded)
 
-Faster-Whisper models auto-download to HuggingFace cache:
-- `faster-whisper-tiny.en` (39 MB) – Default model
-- Supported compute types: `float32`, `int8`, `int8_float16`
+Faster-Whisper models auto-download on first use:
+- **Default**: `faster-whisper-tiny.en` (39 MB)
+- **Location**: `$HF_HOME/hub/models--Systran--faster-whisper-{MODEL}/`
+- **Supported compute types**: `float32`, `int8`, `int8_float16`
+- **Available models**: tiny.en, base.en, small.en, medium.en, large-v2
 
 ### PyTorch Fallback Models
 
-When ONNX models unavailable, system auto-downloads from:
-- Silero VAD → TorchHub (`snakers4/silero-vad`)
-- PANNs SED → `panns_inference` library
-- Emotion/Intent → HuggingFace Hub via `transformers`
+When ONNX models are unavailable, system auto-downloads from:
+- **Silero VAD** → TorchHub (`snakers4/silero-vad`)
+- **PANNs SED** → `panns_inference` library
+- **Emotion/Intent** → HuggingFace Hub via `transformers`
 
 ⚠️ **Warning:** PyTorch fallbacks are 2-3x slower than ONNX and consume more memory.
 
@@ -324,6 +500,9 @@ python -m diaremot.cli resume --input audio.wav --outdir outputs/
 # Clear cache before run
 python -m diaremot.cli run --input audio.wav --outdir outputs/ \
     --clear-cache
+
+# Run smoke test
+python -m diaremot.cli smoke --outdir outputs/
 ```
 
 ### Key CLI Flags
@@ -334,23 +513,23 @@ python -m diaremot.cli run --input audio.wav --outdir outputs/ \
 
 **Performance:**
 - `--asr-compute-type` – `float32` (default) | `int8` | `int8_float16`
-- `--cpu-threads` – Thread count for CPU operations (default: 1)
+- `--asr-cpu-threads` – Thread count for CPU operations (default: 1)
 
 **VAD/Diarization:**
 - `--vad-threshold` – Override adaptive VAD threshold (0.0-1.0)
 - `--vad-min-speech-sec` – Minimum speech segment duration
-- `--speech-pad-sec` – Padding around speech segments
+- `--vad-speech-pad-sec` – Padding around speech segments
 - `--ahc-distance-threshold` – Speaker clustering threshold
+- `--clustering-backend` – Clustering method (ahc or spectral)
 
 **Features:**
-- `--disable-sed` – Skip sound event detection
+- `--disable-sed` / `--enable-sed` – Toggle sound event detection
 - `--disable-affect` – Skip emotion/intent analysis
 - `--profile` – Preset configuration (default|fast|accurate|offline)
 
 **Diagnostics:**
 - `--quiet` – Reduce console output
-- `--validate-dependencies` – Check all dependencies before processing
-- `--strict-dependency-versions` – Enforce exact version requirements
+- `--strict` – Enforce strict dependency versions (diagnostics command)
 
 ### Profile Presets
 
@@ -371,21 +550,20 @@ python -m diaremot.cli run -i audio.wav -o out/ --profile offline
 ### Programmatic API
 
 ```python
-from diaremot.pipeline.audio_pipeline_core import AudioAnalysisPipelineV2
+from diaremot.pipeline.audio_pipeline_core import run_pipeline, build_pipeline_config
 
 # Configure pipeline
-config = {
+config = build_pipeline_config({
     "whisper_model": "faster-whisper-tiny.en",
     "asr_backend": "faster",
     "compute_type": "int8",
     "vad_threshold": 0.35,
-    "disable_sed": False,
+    "enable_sed": True,
     "disable_affect": False,
-}
+})
 
-# Initialize and run
-pipeline = AudioAnalysisPipelineV2(config)
-result = pipeline.process_audio_file("audio.wav", "outputs/")
+# Run pipeline
+result = run_pipeline("audio.wav", "outputs/", config=config)
 
 # Access results
 print(f"Processed {result['num_segments']} segments")
@@ -400,25 +578,32 @@ print(f"Output directory: {result['out_dir']}")
 ### Technology Stack
 
 **Core Runtime:**
-- Python 3.11
-- ONNXRuntime 1.17.1 (primary inference engine)
-- PyTorch 2.4.1+cpu (minimal fallback use)
+- Python 3.11-3.12
+- ONNXRuntime ≥1.17 (primary inference engine)
+- PyTorch 2.x (minimal fallback use)
 
 **Audio Processing:**
-- librosa 0.10.2 (resampling, feature extraction)
-- scipy 1.10.1 (signal processing)
-- soundfile 0.12.1 (I/O)
-- Praat-Parselmouth 0.4.3 (voice quality)
+- librosa 0.10.2.post1 (resampling, feature extraction)
+- scipy ≥1.10,<1.14 (signal processing)
+- soundfile ≥0.12 (I/O)
+- resampy ≥0.4.3 (high-quality resampling)
+- pydub ≥0.25 (audio utilities)
 
 **ML/NLP:**
-- CTranslate2 4.6.0 (ASR backend)
-- faster-whisper 1.1.0 (ASR wrapper)
-- transformers 4.38.2 (HuggingFace models)
+- CTranslate2 ≥4.2,<5.0 (ASR backend)
+- faster-whisper ≥1.0.3 (ASR wrapper)
+- transformers ≥4.40,<4.46 (HuggingFace models)
+- scikit-learn ≥1.3,<1.6 (clustering)
 
 **Data/Reporting:**
-- pandas 2.0.3 (data handling)
-- reportlab 4.1.0 (PDF generation)
-- jinja2 3.1.6 (HTML templating)
+- pandas ≥2.0,<2.3 (data handling)
+- jinja2 ≥3.1 (HTML templating)
+- markdown-it-py ≥3.0 (markdown processing)
+
+**CLI/UI:**
+- typer (CLI framework)
+- rich ≥13.7 (console output)
+- tqdm ≥4.66 (progress bars)
 
 ### Processing Flow
 
@@ -461,65 +646,52 @@ Transcription module employs sophisticated batching:
 
 ## CSV Schema Reference
 
-The primary output `diarized_transcript_with_emotion.csv` contains 39 columns:
+The primary output `diarized_transcript_with_emotion.csv` contains **40 columns** (in this exact order):
 
-### Temporal Fields
-- `start` – Segment start time (seconds)
-- `end` – Segment end time (seconds)
-- `duration_s` – Segment duration
-
-### Speaker Fields
-- `speaker_id` – Internal speaker ID
-- `speaker_name` – Human-readable speaker name
-
-### Content Fields
-- `text` – Transcribed text
-- `asr_logprob_avg` – ASR confidence (average log probability)
-  - Negative values closer to 0 indicate higher confidence
-  - Typical range: -0.1 to -2.0 for good quality
-
-### Emotion Fields
-- `valence` – Valence (-1 to +1, negative to positive)
-- `arousal` – Arousal (-1 to +1, calm to excited)
-- `dominance` – Dominance (-1 to +1, submissive to dominant)
-- `emotion_top` – Top speech emotion label
-- `emotion_scores_json` – All 8 emotion scores (JSON)
-- `text_emotions_top5_json` – Top 5 text emotions (JSON)
-- `text_emotions_full_json` – All 28 text emotions (JSON)
-- `affect_hint` – Human-readable affect state
-
-### Intent Fields
-- `intent_top` – Top intent label
-- `intent_top3_json` – Top 3 intents with confidence (JSON)
-
-### Sound Event Fields
-- `events_top3_json` – Top 3 background sounds (JSON)
-- `noise_tag` – Dominant background class
-
-### Quality Metrics
-- `snr_db` – Signal-to-noise ratio estimate
-- `snr_db_sed` – SNR from SED noise score
-- `low_confidence_ser` – Low speech emotion confidence flag
-- `vad_unstable` – VAD instability flag
-- `error_flags` – Processing error indicators
-
-### Prosody & Paralinguistics
-- `wpm` – Words per minute
-- `words` – Word count
-- `pause_count` – Number of pauses
-- `pause_time_s` – Total pause duration
-- `pause_ratio` – Pause time / total duration
-- `disfluency_count` – Filler word count
-- `f0_mean_hz` – Mean fundamental frequency
-- `f0_std_hz` – F0 standard deviation
-- `loudness_rms` – RMS loudness
-
-### Voice Quality (Praat)
-- `vq_jitter_pct` – Jitter percentage
-- `vq_shimmer_db` – Shimmer in dB
-- `vq_hnr_db` – Harmonics-to-Noise Ratio
-- `vq_cpps_db` – Cepstral Peak Prominence Smoothed
-- `voice_quality_hint` – Human-readable quality interpretation
+### Column Order (CRITICAL - DO NOT MODIFY)
+```python
+SEGMENT_COLUMNS = [
+    "file_id",                      # 1.  File identifier
+    "start",                        # 2.  Segment start time (seconds)
+    "end",                          # 3.  Segment end time (seconds)
+    "speaker_id",                   # 4.  Internal speaker ID
+    "speaker_name",                 # 5.  Human-readable speaker name
+    "text",                         # 6.  Transcribed text
+    "valence",                      # 7.  Valence (-1 to +1)
+    "arousal",                      # 8.  Arousal (-1 to +1)
+    "dominance",                    # 9.  Dominance (-1 to +1)
+    "emotion_top",                  # 10. Top speech emotion label
+    "emotion_scores_json",          # 11. All 8 emotion scores (JSON)
+    "text_emotions_top5_json",      # 12. Top 5 text emotions (JSON)
+    "text_emotions_full_json",      # 13. All 28 text emotions (JSON)
+    "intent_top",                   # 14. Top intent label
+    "intent_top3_json",             # 15. Top 3 intents with confidence (JSON)
+    "events_top3_json",             # 16. Top 3 background sounds (JSON)
+    "noise_tag",                    # 17. Dominant background class
+    "asr_logprob_avg",              # 18. ASR confidence (avg log prob)
+    "snr_db",                       # 19. Signal-to-noise ratio estimate
+    "snr_db_sed",                   # 20. SNR from SED noise score
+    "wpm",                          # 21. Words per minute
+    "duration_s",                   # 22. Segment duration
+    "words",                        # 23. Word count
+    "pause_ratio",                  # 24. Pause time / total duration
+    "low_confidence_ser",           # 25. Low speech emotion confidence flag
+    "vad_unstable",                 # 26. VAD instability flag
+    "affect_hint",                  # 27. Human-readable affect state
+    "pause_count",                  # 28. Number of pauses
+    "pause_time_s",                 # 29. Total pause duration
+    "f0_mean_hz",                   # 30. Mean fundamental frequency
+    "f0_std_hz",                    # 31. F0 standard deviation
+    "loudness_rms",                 # 32. RMS loudness
+    "disfluency_count",             # 33. Filler word count
+    "error_flags",                  # 34. Processing error indicators
+    "vq_jitter_pct",                # 35. Jitter percentage
+    "vq_shimmer_db",                # 36. Shimmer in dB
+    "vq_hnr_db",                    # 37. Harmonics-to-Noise Ratio
+    "vq_cpps_db",                   # 38. Cepstral Peak Prominence Smoothed
+    "voice_quality_hint",           # 39. Human-readable quality interpretation
+]
+```
 
 **CRITICAL:** This schema is contractual. Modifications require version bumps and migration plans.
 
@@ -530,10 +702,8 @@ The primary output `diarized_transcript_with_emotion.csv` contains 39 columns:
 ### Smoke Test
 
 ```bash
-# Quick validation
-python -m diaremot.cli run \
-    --input tests/fixtures/sample.wav \
-    --outdir /tmp/smoke_test
+# Quick validation with generated audio
+python -m diaremot.cli smoke --outdir /tmp/smoke_test
 
 # Verify outputs
 ls /tmp/smoke_test/diarized_transcript_with_emotion.csv
@@ -546,8 +716,8 @@ ls /tmp/smoke_test/qc_report.json
 # Run all tests
 pytest tests/ -v
 
-# Run specific test module
-pytest tests/test_paralinguistics.py -v
+# Run specific test
+pytest tests/test_diarization.py -v
 
 # Run with coverage
 pytest tests/ --cov=diaremot --cov-report=html
@@ -561,9 +731,6 @@ python -m diaremot.cli diagnostics
 
 # Strict version check
 python -m diaremot.cli diagnostics --strict
-
-# Programmatic check
-python -c "from diaremot.pipeline.config import diagnostics; print(diagnostics())"
 ```
 
 ---
@@ -587,23 +754,22 @@ python -c "import diaremot; print(diaremot.__file__)"
 echo $DIAREMOT_MODEL_DIR
 ls -lh $DIAREMOT_MODEL_DIR/
 
-# Verify all required models
+# Verify critical models exist (ACTUAL PATHS)
 python -c "
 from pathlib import Path
 import os
 models = [
-    'silero_vad.onnx',
-    'ecapa_tdnn.onnx',
-    'Affect/ser8-onnx-int8/ser8.int8.onnx',
-    'Affect/ser8/model.onnx',
+    'Diarization/silaro_vad/silero_vad.onnx',
+    'Diarization/ecapa-onnx/ecapa_tdnn.onnx',
+    'Affect/ser8/model.int8.onnx',
     'Affect/VAD_dim/model.onnx',
     'Affect/sed_panns/model.onnx',
-    'text_emotions/model.onnx',
+    'text_emotions/model.int8.onnx',
     'intent/model_int8.onnx'
 ]
 model_dir = Path(os.getenv('DIAREMOT_MODEL_DIR', 'D:/models'))
 missing = [m for m in models if not (model_dir / m).exists()]
-print('Missing:' if missing else 'All models present:', missing or '✓')
+print('✓ All models present' if not missing else f'Missing models: {missing}')
 "
 ```
 
@@ -616,7 +782,7 @@ python -m diaremot.cli run -i audio.wav -o out/ --vad-threshold 0.25
 python -m diaremot.cli run -i audio.wav -o out/ --ahc-distance-threshold 0.20
 
 # Add more speech padding
-python -m diaremot.cli run -i audio.wav -o out/ --speech-pad-sec 0.30
+python -m diaremot.cli run -i audio.wav -o out/ --vad-speech-pad-sec 0.30
 ```
 
 **Slow processing**
@@ -636,16 +802,10 @@ python -m diaremot.cli run -i audio.wav -o out/ --profile fast
 ```bash
 # Auto-chunking activates at 30 minutes
 # Force smaller chunks:
-python -c "
-from diaremot.pipeline.audio_pipeline_core import AudioAnalysisPipelineV2
-config = {
-    'chunk_threshold_minutes': 15.0,
-    'chunk_size_minutes': 10.0,
-    'chunk_overlap_seconds': 20.0,
-}
-pipeline = AudioAnalysisPipelineV2(config)
-pipeline.process_audio_file('long_audio.wav', 'outputs/')
-"
+python -m diaremot.cli run -i long_audio.wav -o out/ \
+    --chunk-threshold-minutes 15.0 \
+    --chunk-size-minutes 10.0 \
+    --chunk-overlap-seconds 20.0
 ```
 
 ### Debug Logging
@@ -654,11 +814,10 @@ pipeline.process_audio_file('long_audio.wav', 'outputs/')
 import logging
 logging.basicConfig(level=logging.DEBUG)
 
-from diaremot.pipeline.audio_pipeline_core import AudioAnalysisPipelineV2
+from diaremot.pipeline.audio_pipeline_core import run_pipeline
 
 # Now run pipeline with verbose output
-pipeline = AudioAnalysisPipelineV2({})
-result = pipeline.process_audio_file("audio.wav", "outputs/")
+result = run_pipeline("audio.wav", "outputs/")
 ```
 
 ### Clear Cache
@@ -718,7 +877,7 @@ ruff check src/ tests/
 # Format code
 ruff format src/ tests/
 
-# Type check (if configured)
+# Type check
 mypy src/
 
 # Run tests
@@ -729,53 +888,103 @@ pytest tests/ -v
 
 1. Create stage module in `src/diaremot/pipeline/stages/`
 2. Add to `PIPELINE_STAGES` list in `stages/__init__.py`
-3. Update `AI_INDEX.yaml`
-4. Add tests to `tests/`
-5. Document in `README.md` and `CLAUDE.md`
+3. Add tests to `tests/`
+4. Document in `README.md` and `GEMINI.md`
 
 ### Adding New Models
 
 1. Add ONNX export logic to `src/diaremot/io/onnx_utils.py`
 2. Update model loading in appropriate module
 3. Document in `README.md` models section
-4. Add to `models.zip` release asset
-5. Test both ONNX and fallback paths
+4. Test both ONNX and fallback paths
 
 ---
 
 ## Project Structure
 
 ```
-diaremot2-ai/
-├── src/diaremot/
-│   ├── pipeline/
-│   │   ├── stages/              # 11 pipeline stages
-│   │   ├── audio_pipeline_core.py
-│   │   ├── orchestrator.py
-│   │   ├── speaker_diarization.py
-│   │   ├── transcription_module.py
-│   │   ├── outputs.py           # CSV schema
-│   │   └── config.py
-│   ├── affect/
-│   │   ├── emotion_analyzer.py
-│   │   └── paralinguistics.py
-│   ├── io/
-│   │   ├── onnx_utils.py
-│   │   └── download_utils.py
-│   ├── utils/
-│   └── cli.py                   # Main CLI entry point
+diaremot2-on/
+├── src/
+│   ├── audio_pipeline_core.py       # Legacy location (transitional)
+│   └── diaremot/                    # Main package
+│       ├── cli.py                   # Typer-based CLI
+│       ├── api.py                   # Public API
+│       ├── pipeline/
+│       │   ├── stages/              # 11 pipeline stages
+│       │   │   ├── base.py          # Stage definition
+│       │   │   ├── dependency_check.py
+│       │   │   ├── preprocess.py
+│       │   │   ├── diarize.py
+│       │   │   ├── asr.py
+│       │   │   ├── paralinguistics.py
+│       │   │   ├── affect.py
+│       │   │   ├── summaries.py
+│       │   │   └── __init__.py      # PIPELINE_STAGES registry
+│       │   ├── audio_pipeline_core.py
+│       │   ├── orchestrator.py
+│       │   ├── speaker_diarization.py
+│       │   ├── transcription_module.py
+│       │   ├── outputs.py           # CSV schema (40 columns)
+│       │   ├── config.py
+│       │   ├── runtime_env.py
+│       │   ├── pipeline_checkpoint_system.py
+│       │   └── ...
+│       ├── affect/
+│       │   ├── emotion_analyzer.py
+│       │   ├── emotion_analysis.py
+│       │   ├── paralinguistics.py
+│       │   ├── ser_onnx.py
+│       │   ├── sed_panns.py
+│       │   └── intent_defaults.py
+│       ├── io/
+│       │   ├── onnx_utils.py
+│       │   ├── download_utils.py
+│       │   └── speaker_registry_manager.py
+│       ├── sed/
+│       │   ├── sed_panns_onnx.py
+│       │   └── sed_yamnet_tf.py
+│       ├── summaries/
+│       │   ├── conversation_analysis.py
+│       │   ├── html_summary_generator.py
+│       │   ├── pdf_summary_generator.py
+│       │   └── speakers_summary_builder.py
+│       ├── tools/
+│       │   └── deps_check.py
+│       └── utils/
+│           ├── model_paths.py
+│           └── hash.py
 ├── tests/
-│   ├── fixtures/
-│   └── test_*.py
-├── requirements.txt
-├── pyproject.toml
-├── README.md                    # This file
-├── CLAUDE.md                    # AI assistant instructions
-├── AGENTS.md                    # Agent setup guide
-└── AI_INDEX.yaml                # Architecture reference
+│   ├── conftest.py
+│   ├── test_diarization.py
+│   └── test_outputs_transcript.py
+├── scripts/
+│   ├── affect_only.py
+│   ├── audit_models_all.py
+│   └── test_affect_stage.py
+├── data/                            # Data files
+├── checkpoints/                     # Pipeline checkpoints
+├── outputs/                         # Default output directory
+├── logs/                            # Log files
+├── dist/                            # Build artifacts
+├── js/                              # JavaScript assets (if any)
+├── .cache/                          # HuggingFace/model cache
+├── pyproject.toml                   # Package configuration
+├── requirements.txt                 # Python dependencies
+├── requirements.in                  # Requirements source
+├── setup.sh                         # Automated setup script (Linux/macOS)
+├── setup.ps1                        # Automated setup script (Windows)
+├── Dockerfile                       # Container definition
+├── Dockerfile.cloudrun              # Cloud Run specific
+├── deploy-cloudrun.sh/.ps1          # Deployment scripts
+├── README.md                        # This file
+├── GEMINI.md                        # AI assistant context/instructions
+├── AGENTS.md                        # Agent setup guide
+├── CLOUD_BUILD_GUIDE.md            # Cloud build instructions
+└── test_*.py                        # Root-level test files
 ```
 
 ---
+"Your core function is efficient and safe assistance. Balance extreme conciseness with the crucial need for clarity, especially regarding safety and potential system modifications. Always prioritize user control and project conventions. Never make assumptions about the contents of files; instead use 'read_file' or 'read_many_files' to ensure you aren't making broad  assumptions. Finally, you are an agent - please keep going until the user's query is completely resolved."
 
 ## Citation
 
@@ -784,10 +993,10 @@ If you use DiaRemot in your research, please cite:
 ```bibtex
 @software{diaremot2024,
   title = {DiaRemot: CPU-Only Speech Intelligence Pipeline},
-  author = {DiaRemot Authors},
+  author = {Timothy Leigh Troglin},
   year = {2024},
-  version = {2.1.0},
-  url = {https://github.com/your-org/diaremot2-ai}
+  version = {2.2.0},
+  url = {https://github.com/tltrogl/diaremot2-on}
 }
 ```
 
@@ -796,14 +1005,6 @@ If you use DiaRemot in your research, please cite:
 ## License
 
 MIT License. See LICENSE file for details.
-
----
-
-## Support
-
-**Issues:** https://github.com/your-org/diaremot2-ai/issues  
-**Documentation:** https://diaremot.readthedocs.io  
-**Email:** support@diaremot.com
 
 ---
 
@@ -820,7 +1021,7 @@ Special thanks to the open-source ML community.
 
 ---
 
-**Last Updated:** 2025-10-11  
+**Last Updated:** 2025-01-15  
 **Version:** 2.2.0  
-**Python:** 3.11+  
+**Python:** 3.11-3.12  
 **License:** MIT

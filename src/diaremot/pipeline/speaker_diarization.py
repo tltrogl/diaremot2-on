@@ -311,7 +311,15 @@ class _SileroWrapper:
             except ValueError:
                 timeout = 30.0
             timeout = max(5.0, timeout)
-            import torch.hub as hub
+
+            try:  # Torch is optional; skip cleanly when absent
+                import torch.hub as hub  # type: ignore[attr-defined]
+            except ModuleNotFoundError:
+                logger.info("Silero VAD Torch backend unavailable (torch not installed)")
+                return False
+            except Exception as exc:  # pragma: no cover - defensive import guard
+                logger.warning(f"Silero VAD Torch import failed: {exc}")
+                return False
 
             def _hub_load():
                 return hub.load(

@@ -26,26 +26,50 @@ Inference policy: ONNX-first; cleanly log any fallback (PyTorch/Transformers/YAM
 
 auto_tune.py is internal to diarization and not an extra stage.
 
-1.2 Dataflow Map (inputs → per-segment → rollups/outputs)
-Audio (1–3h) ──► [0 Preprocess: 16 kHz mono, −20 LUFS, denoise/gain]
-         ├─► [1 SED on boosted audio: CNN14 → ~20 labels, hysteresis]
-         └─► [2 Diarize: Silero VAD → ECAPA embeddings → AHC + merge rules]
-                      └─► [3 ASR: Faster-Whisper tiny.en (CT2)]
-                               └─► [4 Paralinguistics: Praat (jitter/shimmer/HNR/CPPS, prosody)]
-                                        └─► [5 Affect & Assemble:
-                                             Audio tone (V/A/D) + 8-class SER + GoEmotions(28) + BART-MNLI intent
-                                             + attach top SED overlaps]
-                                                └─► [6 Overlap & interruptions]
-                                                     └─► [7 Conversation analysis]
-                                                          └─► [8 Speaker rollups]
-                                                               └─► [9 Outputs]
+1.2 Dataflow Map (11-stage pipeline → outputs)
+See DATAFLOW.md for detailed stage-by-stage documentation.
+
+Audio (1–3h)
+    ↓
+[1] dependency_check → Validate environment
+    ↓
+[2] preprocess → 16kHz mono, -20 LUFS, denoise, auto-chunk
+    ↓ {y, sr, duration_s, health, audio_sha16}
+    ↓
+[3] background_sed → PANNs CNN14 (global + timeline if noisy)
+    ↓ {sed_info: top labels, dominant_label, noise_score}
+    ↓
+[4] diarize → Silero VAD + ECAPA embeddings + AHC clustering
+    ↓ {turns: [{start, end, speaker, speaker_name}]}
+    ↓
+[5] transcribe → Faster-Whisper with intelligent batching
+    ↓ {norm_tx: [{start, end, speaker, text, asr_logprob_avg}]}
+    ↓
+[6] paralinguistics → Praat (jitter/shimmer/HNR/CPPS) + prosody
+    ↓ {para_map: {seg_idx: {wpm, vq_*, f0_*, ...}}}
+    ↓
+[7] affect_and_assemble → Audio (VAD+SER8) + Text (GoEmotions+BART-MNLI)
+    ↓ {segments_final: 39 columns per segment}
+    ↓
+[8] overlap_interruptions → Overlaps + interruption classification
+    ↓ {overlap_stats, per_speaker_interrupts}
+    ↓
+[9] conversation_analysis → Turn-taking + dominance + flow
+    ↓ {conv_metrics}
+    ↓
+[10] speaker_rollups → Per-speaker aggregated stats
+    ↓ {speakers_summary}
+    ↓
+[11] outputs → CSV/JSONL/HTML/PDF/QC reports
 
 
 Artifacts:
 
-Primary CSV: diarized_transcript_with_emotion.csv (39 columns, fixed order).
+Primary CSV: diarized_transcript_with_emotion.csv (39 columns, fixed order per SEGMENT_COLUMNS).
 
-Other defaults: segments.jsonl, speakers_summary.csv, events_timeline.csv, summary.html, qc_report.json, etc.
+Other defaults: segments.jsonl, speakers_summary.csv, events_timeline.csv, summary.html, summary.pdf, qc_report.json, timeline.csv, diarized_transcript_readable.txt, speaker_registry.json.
+
+Cache files: .cache/{audio_sha16}/preprocessed.npz, diar.json, tx.json (enables resume).
 
 1.3 Model Map (preferred ONNX; CPU-friendly)
 VAD	Silero VAD (ONNX)	Well-known CPU VAD; ONNX variants exist. 
