@@ -8,7 +8,7 @@ Network: Internet ON.
 
 Execution: CPU-only (no CUDA paths).
 
-Inference policy: ONNX-first; cleanly log any fallback (PyTorch/Transformers/YAMNet).
+Inference policy: ONNX-first
 
 1) Project Maps (fast mental model)
 1.1 Pipeline Stage Map (fixed 11 stages)
@@ -101,7 +101,7 @@ Speaker registry persistence: e.g., speaker_registry.json (centroids, names)
 
 3) Deterministic Task Protocol (what you return every time)
 
-A) Plan (5–10 bullets)
+A) Plan
 Name exact files/symbols and the one-clause reason for each edit.
 
 B) Code Changes
@@ -121,7 +121,7 @@ python -m diaremot.cli run -i data\sample.wav -o outputs\_smoke --disable-affect
 # Contracts (hard fail if violated)
 python - << 'PY'
 from diaremot.pipeline.outputs import SEGMENT_COLUMNS
-assert len(SEGMENT_COLUMNS)==39, f"CSV columns != 39 ({len(SEGMENT_COLUMNS)})"
+assert len(SEGMENT_COLUMNS)==40, f"CSV columns != 39 ({len(SEGMENT_COLUMNS)})"
 print("CSV schema OK")
 PY
 
