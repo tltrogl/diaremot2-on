@@ -824,3 +824,6 @@ Special thanks to the open-source ML community.
 **Version:** 2.2.0  
 **Python:** 3.11+  
 **License:** MIT
+
+[![Open in Cloud Shell](https://gstatic.com/cloudssh/images/open-btn.svg)](https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/tltrogl/diaremot2-on&cloudshell_git_branch=main&cloudshell_workspace=.&cloudshell_open_in_editor=README.md&show=ide%2Cterminal)
+
