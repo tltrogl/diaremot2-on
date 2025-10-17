@@ -786,5 +786,10 @@ def main_diagnostics() -> None:
     typer.run(diagnostics)
 
 
+def main() -> None:
+    """Console script entry point for the DiaRemot CLI (Typer app)."""
+    app()
+
+
 if __name__ == "__main__":  # pragma: no cover
     app()

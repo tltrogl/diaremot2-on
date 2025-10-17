@@ -1,6 +1,6 @@
 param(
   [Parameter(Position=0, Mandatory=$true)] [string]$InputPath,
-  [Parameter(Position=1, Mandatory=$true)] [string]$OutDir,
+  [Parameter(Position=1, Mandatory=$false)] [string]$OutDir,
   [Parameter(ValueFromRemainingArguments=$true)] [string[]]$Rest
 )
 
@@ -12,8 +12,16 @@ if (-not (Test-Path (Join-Path $repoRoot '.balls\Scripts\python.exe'))) {
   exit 1
 }
 
+$in = (Resolve-Path $InputPath).Path
+if (-not $OutDir -or $OutDir -eq '') {
+  $inParent = Split-Path -Parent $in
+  $stem = [System.IO.Path]::GetFileNameWithoutExtension($in)
+  $OutDir = Join-Path (Join-Path $inParent 'outs') $stem
+}
+New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+
 $env:PYTHONPATH = (Resolve-Path (Join-Path $repoRoot 'src'))
 $python = Join-Path $repoRoot '.balls\Scripts\python.exe'
 
-& $python -m diaremot.cli run -i $InputPath -o $OutDir @Rest
+& $python -m diaremot.cli run -i $in -o $OutDir @Rest
 exit $LASTEXITCODE
