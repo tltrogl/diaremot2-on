@@ -775,13 +775,22 @@ class EmotionAnalyzer:
         self.path_text_onnx = str(
             _select_first_existing(
                 self.text_model_dir,
-                ("model.onnx", "roberta-base-go_emotions.onnx"),
+                (
+                    "model.int8.onnx",
+                    "model.onnx",
+                    "roberta-base-go_emotions.onnx",
+                ),
             )
         )
         self.path_ser8_onnx = str(
             _select_first_existing(
                 self.ser_model_dir,
-                ("ser8.int8.onnx", "model.onnx", "ser_8class.onnx"),
+                (
+                    "model.int8.onnx",
+                    "ser8.int8.onnx",
+                    "model.onnx",
+                    "ser_8class.onnx",
+                ),
             )
         )
         self.path_vad_onnx = str(

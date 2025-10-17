@@ -244,6 +244,13 @@ class _SileroWrapper:
                 if not onnx_path:
                     candidate_paths = list(iter_model_subpaths("silero_vad.onnx"))
                     candidate_paths.extend(list(iter_model_subpaths(Path("silero") / "vad.onnx")))
+                    for root in MODEL_ROOTS:
+                        root_path = Path(root)
+                        try:
+                            for cand in root_path.glob("**/silero_vad.onnx"):
+                                candidate_paths.append(cand)
+                        except OSError:
+                            continue
                     unique_candidates: list[Path] = []
                     seen: set[str] = set()
                     for cand in candidate_paths:

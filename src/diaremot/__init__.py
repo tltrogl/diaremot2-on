@@ -3,7 +3,7 @@ DiaRemot: Enhanced Speech ML Analysis Package
 Optimized lazy-loading with comprehensive integration
 """
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 __author__ = "DiaRemot ML Team"
 
 import importlib

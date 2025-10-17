@@ -135,11 +135,11 @@ def _resolve_state_shape(shape: tuple[Any, ...] | None) -> tuple[int, ...]:
 class DiarizationConfig:
     target_sr: int = 16000
     mono: bool = True
-    # Silero VAD - Two-stage strategy: loose VAD to catch quiet speech
-    vad_threshold: float = 0.22
-    vad_min_speech_sec: float = 0.25
-    vad_min_silence_sec: float = 0.30
-    speech_pad_sec: float = 0.20
+    # Silero VAD defaults (aligned with docs + production defaults)
+    vad_threshold: float = 0.35
+    vad_min_speech_sec: float = 0.80
+    vad_min_silence_sec: float = 0.80
+    speech_pad_sec: float = 0.10
     # VAD backend preference: 'auto' | 'torch' | 'onnx'
     # Default to 'auto' to honor ONNX-first policy and cleanly fall back.
     vad_backend: str = "auto"
@@ -160,7 +160,8 @@ class DiarizationConfig:
     min_turn_sec: float = 1.50
     max_gap_to_merge_sec: float = 1.00
     # Post-cluster merging (reduce over-fragmentation when speakers unknown)
-    post_merge_distance_threshold: float = 0.12  # cosine distance threshold to merge
+    # Post-merge heuristics tuned to reduce micro-clusters when VAD over-splits
+    post_merge_distance_threshold: float = 0.30  # cosine distance threshold to merge
     post_merge_min_speakers: int | None = None   # do not reduce below this (None=no floor)
     # Registry
     registry_path: str = "registry/speaker_registry.json"
@@ -176,7 +177,7 @@ class DiarizationConfig:
     # Single-speaker collapse heuristic
     single_speaker_collapse: bool = True
     single_speaker_dominance: float = 0.88
-    single_speaker_centroid_threshold: float = 0.08
+    single_speaker_centroid_threshold: float = 0.20
     single_speaker_min_turns: int = 3
 
 
@@ -367,6 +368,14 @@ class _SileroWrapper:
                 if not onnx_path:
                     candidate_paths = list(iter_model_subpaths("silero_vad.onnx"))
                     candidate_paths.extend(list(iter_model_subpaths(Path("silero") / "vad.onnx")))
+                    # Some bundles ship the model inside typo'd or nested directories; scan for it.
+                    for root in MODEL_ROOTS:
+                        root_path = Path(root)
+                        try:
+                            for cand in root_path.glob("**/silero_vad.onnx"):
+                                candidate_paths.append(cand)
+                        except OSError:
+                            continue
                     unique_candidates: list[Path] = []
                     seen: set[str] = set()
                     for cand in candidate_paths:
@@ -1319,9 +1328,17 @@ class SpeakerDiarizer:
             return 1.0 - float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-9))
 
         min_speakers = int(self.config.post_merge_min_speakers or 0)
-        thresh = float(self.config.post_merge_distance_threshold or 0.0)
-        if thresh <= 0.0:
+        base_thresh = float(self.config.post_merge_distance_threshold or 0.0)
+        if base_thresh <= 0.0:
             return turns
+        dynamic_thresh = base_thresh
+        if len(centroids) >= max(6, min_speakers + 5):
+            fallback = float(getattr(self.config, "single_speaker_centroid_threshold", 0.0) or 0.0)
+            if fallback > 0.0:
+                dynamic_thresh = max(dynamic_thresh, min(1.0, fallback * 2.0))
+            else:
+                dynamic_thresh = max(dynamic_thresh, 0.40)
+        thresh = dynamic_thresh
         changed = True
         while changed and len(centroids) > max(1, min_speakers):
             changed = False
