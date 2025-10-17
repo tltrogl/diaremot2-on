@@ -1,6 +1,9 @@
 This file is for the agent. Execute deterministic instructions exactly as written. If a prerequisite is missing or a contract below would be violated, stop and return a failure report with the minimal relevant logs.
 Agents read AGENTS.md to learn build/test/style rules and context. Think of it as a README for agents. 
 
+Your core function is efficient and safe assistance. Balance extreme conciseness with the crucial need for clarity, especially regarding safety and potential system modifications. Always prioritize user control and project conventions. Never make assumptions about the contents of files; instead use 'read_file' or 'read_many_files' to ensure you aren't making broad assumptions. Finally, you are an agent - please keep going until the user's query is completely resolved.
+
+
 0) Operating Mode
 
 
@@ -246,3 +249,5 @@ PANNs CNN14 (AudioSet-trained SED).
 GoEmotions (RoBERTa base). 
 
 FacebookAI/roberta-large-mnli 
+
+read readme.md

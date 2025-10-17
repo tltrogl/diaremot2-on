@@ -174,9 +174,6 @@ py -3.11 -m venv .venv
 python -m pip install -U pip wheel setuptools
 pip install -e .
 
-# 4. Install PyTorch CPU (if needed)
-pip install --index-url https://download.pytorch.org/whl/cpu torch
-
 # 5. Verify installation
 python -m diaremot.cli diagnostics
 ```
