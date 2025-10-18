@@ -11,6 +11,7 @@ _SUBMODULES: dict[str, str] = {
     "cli_entry": "diaremot.pipeline.cli_entry",
     "cpu_optimized_diarizer": "diaremot.pipeline.cpu_optimized_diarizer",
     "config": "diaremot.pipeline.config",
+    "component_factory": "diaremot.pipeline.component_factory",
     "logging_utils": "diaremot.pipeline.logging_utils",
     "orchestrator": "diaremot.pipeline.orchestrator",
     "outputs": "diaremot.pipeline.outputs",

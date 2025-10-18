@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 import time
 import uuid
 from pathlib import Path
@@ -12,15 +11,14 @@ from typing import Any
 
 import numpy as np
 
-from ..affect.emotion_analyzer import EmotionIntentAnalyzer
 from ..affect.intent_defaults import INTENT_LABELS_DEFAULT
-from ..affect.sed_panns import PANNSEventTagger, SEDConfig  # type: ignore
 from ..summaries.conversation_analysis import ConversationMetrics
 from ..summaries.html_summary_generator import HTMLSummaryGenerator
 from ..summaries.pdf_summary_generator import PDFSummaryGenerator
 from . import speaker_diarization as _speaker_diarization
 from .audio_preprocessing import AudioPreprocessor, PreprocessConfig
 from .auto_tuner import AutoTuner
+from .component_factory import build_component_bundle
 from .config import (
     DEFAULT_PIPELINE_CONFIG,
     build_pipeline_config,
@@ -43,11 +41,7 @@ from .outputs import (
     write_timeline_csv,
 )
 from .pipeline_checkpoint_system import PipelineCheckpointManager, ProcessingStage
-from .runtime_env import (
-    DEFAULT_WHISPER_MODEL,
-    WINDOWS_MODELS_ROOT,
-    configure_local_cache_env,
-)
+from .runtime_env import DEFAULT_WHISPER_MODEL, configure_local_cache_env
 from .stages import PIPELINE_STAGES, PipelineState
 
 # Backwards-compatible aliases for test hooks and StageGuard shims
@@ -209,318 +203,107 @@ class AudioAnalysisPipelineV2:
         self._init_components(cfg)
 
     def _init_components(self, cfg: dict[str, Any]):
-        """Initialize pipeline components with graceful error handling"""
+        """Initialize pipeline components with graceful error handling."""
 
-        # Ensure attributes exist even if initialization fails part-way
-        self.pre = None
-        self.diar = None
-        self.tx = None
-        self.affect = None
-        self.sed_tagger = None
-        self.html = None
-        self.pdf = None
-        self.auto_tuner = None
-        affect_backend_cfg = cfg.get("affect_backend", "onnx")
-        affect_text_model_dir_cfg = cfg.get("affect_text_model_dir")
-        affect_intent_model_dir_cfg = cfg.get("affect_intent_model_dir")
-        affect_threads_cfg = cfg.get("affect_analyzer_threads")
+        bundle = build_component_bundle(cfg, self.corelog)
 
-        affect_kwargs: dict[str, Any] = {
-            "text_emotion_model": cfg.get("text_emotion_model", "SamLowe/roberta-base-go_emotions"),
-            "intent_labels": cfg.get("intent_labels", INTENT_LABELS_DEFAULT),
-            "affect_backend": affect_backend_cfg,
-            "affect_text_model_dir": affect_text_model_dir_cfg,
-            "affect_ser_model_dir": cfg.get("affect_ser_model_dir"),
-            "affect_vad_model_dir": cfg.get("affect_vad_model_dir"),
-            "affect_intent_model_dir": affect_intent_model_dir_cfg,
-            "analyzer_threads": affect_threads_cfg,
-            "disable_downloads": cfg.get("disable_downloads"),
-            "model_dir": cfg.get("affect_model_dir"),
-        }
+        self.pp_conf = bundle.pp_conf or PreprocessConfig()
+        if bundle.pre is not None:
+            self.pre = bundle.pre
+        else:
+            try:
+                self.pre = AudioPreprocessor(self.pp_conf)
+            except Exception:
+                self.pre = None
 
-        try:
-            # Preprocessor
-            denoise_mode = "spectral_sub_soft" if cfg.get("noise_reduction", True) else "none"
-            self.pp_conf = PreprocessConfig(
-                target_sr=cfg.get("target_sr", 16000),
-                denoise=denoise_mode,
-                loudness_mode=cfg.get("loudness_mode", "asr"),
-                auto_chunk_enabled=cfg.get("auto_chunk_enabled", True),
-                chunk_threshold_minutes=cfg.get("chunk_threshold_minutes", 60.0),
-                chunk_size_minutes=cfg.get("chunk_size_minutes", 20.0),
-                chunk_overlap_seconds=cfg.get("chunk_overlap_seconds", 30.0),
+        diar_conf = bundle.diar_conf
+        if diar_conf is None:
+            diar_conf = _speaker_diarization.DiarizationConfig(
+                target_sr=self.pp_conf.target_sr
             )
-            self.pre = AudioPreprocessor(self.pp_conf)
+        self.diar_conf = diar_conf
 
-            # Diarizer
-            registry_path = cfg.get(
-                "registry_path", str(Path("registry") / "speaker_registry.json")
-            )
-            if not Path(registry_path).is_absolute():
-                registry_path = str(Path.cwd() / registry_path)
+        self.diar = bundle.diar
+        if self.diar is None:
+            try:
+                self.diar = _speaker_diarization.SpeakerDiarizer(self.diar_conf)
+            except Exception:
+                self.diar = None
 
-            ecapa_path = cfg.get("ecapa_model_path")
-            search_paths = [
-                ecapa_path,
-                WINDOWS_MODELS_ROOT / "ecapa_tdnn.onnx" if WINDOWS_MODELS_ROOT else None,
-                Path("models") / "ecapa_tdnn.onnx",
-                Path("..") / "models" / "ecapa_tdnn.onnx",
-                Path("..") / "diaremot" / "models" / "ecapa_tdnn.onnx",
-                Path("..") / ".." / "models" / "ecapa_tdnn.onnx",
-                # Documented bundle path in release models.zip
-                Path("models") / "Diarization" / "ecapa-onnx" / "ecapa_tdnn.onnx",
-            ]
-            resolved_path = None
-            for candidate in search_paths:
-                if not candidate:
-                    continue
-                candidate_path = Path(candidate).expanduser()
-                if not candidate_path.is_absolute():
-                    candidate_path = Path.cwd() / candidate_path
-                if candidate_path.exists():
-                    resolved_path = str(candidate_path.resolve())
-                    break
-            ecapa_path = resolved_path
-            # Create diarization config first
-            self.diar_conf = _speaker_diarization.DiarizationConfig(
-                target_sr=self.pp_conf.target_sr,
-                registry_path=registry_path,
-                ahc_distance_threshold=cfg.get(
-                    "ahc_distance_threshold", 0.15
-                ),  # Much looser clustering to prevent speaker fragmentation
-                speaker_limit=cfg.get("speaker_limit", None),
-                clustering_backend=str(cfg.get("clustering_backend", "ahc")),
-                min_speakers=cfg.get("min_speakers", None),
-                max_speakers=cfg.get("max_speakers", None),
-                ecapa_model_path=ecapa_path,
-                vad_backend=cfg.get("vad_backend", "auto"),
-                # Allow CLI to tune VAD
-                vad_threshold=cfg.get(
-                    "vad_threshold",
-                    _speaker_diarization.DiarizationConfig.vad_threshold,
-                ),
-                vad_min_speech_sec=cfg.get(
-                    "vad_min_speech_sec",
-                    _speaker_diarization.DiarizationConfig.vad_min_speech_sec,
-                ),
-                vad_min_silence_sec=cfg.get(
-                    "vad_min_silence_sec",
-                    _speaker_diarization.DiarizationConfig.vad_min_silence_sec,
-                ),
-                speech_pad_sec=cfg.get(
-                    "vad_speech_pad_sec",
-                    _speaker_diarization.DiarizationConfig.speech_pad_sec,
-                ),
-                allow_energy_vad_fallback=not bool(cfg.get("disable_energy_vad_fallback", False)),
-                energy_gate_db=cfg.get(
-                    "energy_gate_db", _speaker_diarization.DiarizationConfig.energy_gate_db
-                ),
-                energy_hop_sec=cfg.get(
-                    "energy_hop_sec", _speaker_diarization.DiarizationConfig.energy_hop_sec
-                ),
-            )
-            # Diarizer: baseline by default; optional CPU-optimized wrapper behind a flag
-            self.diar = _speaker_diarization.SpeakerDiarizer(self.diar_conf)
-            if bool(cfg.get("cpu_diarizer", False)):
-                try:
-                    from .cpu_optimized_diarizer import (
-                        CPUOptimizationConfig,
-                        CPUOptimizedSpeakerDiarizer,
-                    )
+        self.tx = bundle.tx
+        if self.tx is None:
+            try:
+                from .transcription_module import AudioTranscriber
 
-                    cpu_conf = CPUOptimizationConfig(max_speakers=self.diar_conf.speaker_limit)
-                    self.diar = CPUOptimizedSpeakerDiarizer(self.diar, cpu_conf)
-                    self.corelog.info("[diarizer] using CPU-optimized wrapper")
-                except Exception as _e:
-                    self.corelog.warn(f"[diarizer] CPU wrapper unavailable, using baseline: {_e}")
+                self.tx = AudioTranscriber()
+            except Exception:
+                self.tx = None
 
-            # Transcriber - Force CPU-only configuration
-            from .transcription_module import AudioTranscriber
+        self.auto_tuner = bundle.auto_tuner
+        if self.auto_tuner is None:
+            try:
+                self.auto_tuner = AutoTuner()
+            except Exception:
+                self.auto_tuner = None
 
-            transcriber_config = {
-                "model_size": str(cfg.get("whisper_model", DEFAULT_WHISPER_MODEL)),
-                # Device selection is handled internally by the transcription backends
-                "language": cfg.get("language", None),
-                "beam_size": cfg.get("beam_size", 1),
-                "temperature": cfg.get("temperature", 0.0),
-                "compression_ratio_threshold": cfg.get("compression_ratio_threshold", 2.5),
-                "log_prob_threshold": cfg.get("log_prob_threshold", -1.0),
-                "no_speech_threshold": cfg.get("no_speech_threshold", 0.20),
-                "condition_on_previous_text": cfg.get("condition_on_previous_text", False),
-                "word_timestamps": cfg.get("word_timestamps", True),
-                "max_asr_window_sec": cfg.get("max_asr_window_sec", 480),
-                "vad_min_silence_ms": cfg.get("vad_min_silence_ms", 1800),
-                "language_mode": cfg.get("language_mode", "auto"),
-                # Backend tuning
-                "compute_type": cfg.get("compute_type", None),
-                "cpu_threads": cfg.get("cpu_threads", None),
-                "asr_backend": cfg.get("asr_backend", "auto"),
-                # Timeouts
-                "segment_timeout_sec": cfg.get("segment_timeout_sec", 300.0),
-                "batch_timeout_sec": cfg.get("batch_timeout_sec", 1200.0),
+        self.affect = bundle.affect
+        self.sed_tagger = bundle.sed_tagger
+
+        self.html = bundle.html
+        if self.html is None:
+            try:
+                self.html = HTMLSummaryGenerator()
+            except Exception:
+                self.html = None
+
+        self.pdf = bundle.pdf
+        if self.pdf is None:
+            try:
+                self.pdf = PDFSummaryGenerator()
+            except Exception:
+                self.pdf = None
+
+        if bundle.issues:
+            for issue in bundle.issues:
+                if issue not in self.stats.issues:
+                    self.stats.issues.append(issue)
+
+        self.stats.models.update(
+            {
+                "preprocessor": getattr(self.pre, "__class__", type(self.pre)).__name__,
+                "diarizer": getattr(self.diar, "__class__", type(self.diar)).__name__,
+                "transcriber": getattr(self.tx, "__class__", type(self.tx)).__name__,
+                "affect": getattr(self.affect, "__class__", type(self.affect)).__name__,
             }
+        )
 
-            # Set CPU-only environment variables
-            os.environ["CUDA_VISIBLE_DEVICES"] = ""
-            os.environ["TORCH_DEVICE"] = "cpu"
-
-            self.tx = AudioTranscriber(**transcriber_config)
-            self.auto_tuner = AutoTuner()
-
-            # Affect analyzer (optional)
-            def _normalize_model_dir(value: Any) -> str | None:
-                if value in (None, ""):
-                    return None
-                try:
-                    return os.fspath(value)
-                except TypeError:
-                    return str(value)
-
-            affect_backend = affect_backend_cfg
-            if affect_backend is not None:
-                affect_backend = str(affect_backend)
-            affect_text_model_dir = _normalize_model_dir(
-                affect_text_model_dir_cfg
-            )
-            affect_ser_model_dir = _normalize_model_dir(cfg.get("affect_ser_model_dir"))
-            affect_vad_model_dir = _normalize_model_dir(cfg.get("affect_vad_model_dir"))
-            affect_intent_model_dir = _normalize_model_dir(
-                affect_intent_model_dir_cfg
-            )
-            affect_analyzer_threads = affect_threads_cfg
-
-            if cfg.get("disable_affect"):
-                self.affect = None
-            else:
-                self.affect = EmotionIntentAnalyzer(
-                    text_emotion_model=cfg.get(
-                        "text_emotion_model", "SamLowe/roberta-base-go_emotions"
-                    ),
-                    intent_labels=cfg.get("intent_labels", INTENT_LABELS_DEFAULT),
-                    affect_backend=affect_backend,
-                    affect_text_model_dir=affect_text_model_dir,
-                    affect_ser_model_dir=affect_ser_model_dir,
-                    affect_vad_model_dir=affect_vad_model_dir,
-                    affect_intent_model_dir=affect_intent_model_dir,
-                    analyzer_threads=affect_analyzer_threads,
-                    disable_downloads=cfg.get("disable_downloads"),
-                    model_dir=cfg.get("affect_model_dir"),
-                )
-                if getattr(self.affect, "issues", None):
-                    self.stats.issues.extend(self.affect.issues)
-
-            affect_kwargs.update(
-                {
-                    "affect_backend": affect_backend,
-                    "affect_text_model_dir": affect_text_model_dir,
-                    "affect_ser_model_dir": affect_ser_model_dir,
-                    "affect_vad_model_dir": affect_vad_model_dir,
-                    "affect_intent_model_dir": affect_intent_model_dir,
-                    "analyzer_threads": affect_analyzer_threads,
-                }
-            )
-
-            # Background SED / noise tagger (always attempt unless disabled; handles missing models gracefully)
-            sed_enabled = bool(cfg.get("enable_sed", True))
-            self.sed_tagger = None
-            if sed_enabled:
-                try:
-                    if PANNSEventTagger is not None:
-                        self.sed_tagger = PANNSEventTagger(
-                            SEDConfig() if SEDConfig else None
-                        )
-                except Exception as exc:
-                    self.sed_tagger = None
-                    self.corelog.warn(
-                        "[sed] initialization failed: %s. Background tagging will emit empty results.",
-                        exc,
-                    )
-            else:
-                self.corelog.info(
-                    "[sed] background sound event detection disabled; tagger will not be initialised."
-                )
-            if sed_enabled and (
-                self.sed_tagger is None or not getattr(self.sed_tagger, "available", False)
-            ):
-                self.stats.issues.append(
-                    "background_sed assets unavailable; emitting empty tag summary"
-                )
-
-            # HTML & PDF generators
-            self.html = HTMLSummaryGenerator()
-            self.pdf = PDFSummaryGenerator()
-
-            # Model tracking
-            self.stats.models.update(
-                {
-                    "preprocessor": getattr(self.pre, "__class__", type(self.pre)).__name__,
-                    "diarizer": getattr(self.diar, "__class__", type(self.diar)).__name__,
-                    "transcriber": getattr(self.tx, "__class__", type(self.tx)).__name__,
-                    "affect": getattr(self.affect, "__class__", type(self.affect)).__name__,
-                }
-            )
-
-            # Config snapshot
+        if bundle.config_snapshot:
+            self.stats.config_snapshot = bundle.config_snapshot
+        else:
             self.stats.config_snapshot = {
                 "target_sr": self.pp_conf.target_sr,
                 "noise_reduction": cfg.get("noise_reduction", True),
-                "enable_sed": sed_enabled,
-                "registry_path": self.diar_conf.registry_path,
-                "ahc_distance_threshold": self.diar_conf.ahc_distance_threshold,
+                "enable_sed": bool(cfg.get("enable_sed", True)),
+                "registry_path": getattr(self.diar_conf, "registry_path", None),
+                "ahc_distance_threshold": getattr(
+                    self.diar_conf, "ahc_distance_threshold", None
+                ),
                 "whisper_model": str(cfg.get("whisper_model", DEFAULT_WHISPER_MODEL)),
                 "beam_size": cfg.get("beam_size", 1),
                 "temperature": cfg.get("temperature", 0.0),
                 "no_speech_threshold": cfg.get("no_speech_threshold", 0.20),
                 "intent_labels": cfg.get("intent_labels", INTENT_LABELS_DEFAULT),
-                "affect_backend": affect_backend,
-                "affect_text_model_dir": affect_text_model_dir,
-                "affect_ser_model_dir": affect_ser_model_dir,
-                "affect_vad_model_dir": affect_vad_model_dir,
-                "affect_intent_model_dir": affect_intent_model_dir,
-                "affect_analyzer_threads": affect_analyzer_threads,
+                "affect_backend": cfg.get("affect_backend", "onnx"),
+                "affect_text_model_dir": cfg.get("affect_text_model_dir"),
+                "affect_ser_model_dir": cfg.get("affect_ser_model_dir"),
+                "affect_vad_model_dir": cfg.get("affect_vad_model_dir"),
+                "affect_intent_model_dir": cfg.get("affect_intent_model_dir"),
+                "affect_analyzer_threads": cfg.get("affect_analyzer_threads"),
                 "text_emotion_model": cfg.get(
                     "text_emotion_model", "SamLowe/roberta-base-go_emotions"
                 ),
                 "disable_affect": bool(cfg.get("disable_affect", False)),
             }
-
-        except Exception as e:
-            self.corelog.error(f"Component initialization error: {e}")
-            # Ensure minimal components exist even on init failure
-            try:
-                if getattr(self, "pre", None) is None:
-                    self.pre = AudioPreprocessor(PreprocessConfig())
-            except Exception:
-                self.pre = None
-            try:
-                if getattr(self, "diar", None) is None:
-                    self.diar = _speaker_diarization.SpeakerDiarizer(
-                        _speaker_diarization.DiarizationConfig(target_sr=16000)
-                    )
-            except Exception:
-                self.diar = None
-            try:
-                if getattr(self, "tx", None) is None:
-                    from .transcription_module import AudioTranscriber
-
-                    self.tx = AudioTranscriber()
-            except Exception:
-                self.tx = None
-            try:
-                if getattr(self, "affect", None) is None and not cfg.get("disable_affect"):
-                    self.affect = EmotionIntentAnalyzer(**affect_kwargs)
-            except Exception:
-                self.affect = None
-            try:
-                if getattr(self, "pdf", None) is None:
-                    self.pdf = PDFSummaryGenerator()
-            except Exception:
-                pass
-            try:
-                if not hasattr(self, "auto_tuner"):
-                    self.auto_tuner = AutoTuner()
-            except Exception:
-                self.auto_tuner = None
 
     def _affect_hint(self, v, a, d, intent):
         try:
