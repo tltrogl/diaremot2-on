@@ -148,6 +148,8 @@ class DiarizationConfig:
     embed_shift_sec: float = 0.75
     min_embedtable_sec: float = 0.6
     topk_windows: int = 3
+    # Long audio optimization: limit max embeddings to prevent clustering hangs
+    max_embeddings: int | None = 5000  # None = unlimited (not recommended for files >30min)
     # Clustering
     ahc_linkage: str = "average"
     ahc_distance_threshold: float = 0.15
@@ -511,6 +513,14 @@ class _SileroWrapper:
             return []
         duration_sec = orig_samples / float(sr)
         logger.info(f"Starting ONNX VAD: {duration_sec:.1f}s audio → {num_chunks} chunks to process")
+
+        # Warn if this will take a very long time
+        if num_chunks > 100000:  # ~3+ hours of audio
+            est_minutes = num_chunks / 60000  # very rough estimate: ~1000 chunks/sec on typical CPU
+            logger.warning(
+                f"Very long audio file detected! Processing {num_chunks} chunks may take "
+                f"~{est_minutes:.0f} minutes. Consider splitting the file into smaller segments."
+            )
         state_shape = list(self._onnx_state_shape or (2, 1, 128))
         if len(state_shape) < 3:
             state_shape = [2, batch_size, 128]
@@ -990,12 +1000,20 @@ class SpeakerDiarizer:
         if not embeddings:
             logger.warning("No valid embeddings extracted")
             return []
-        # Safeguard: warn if excessive embeddings could cause very slow clustering
-        if len(embeddings) > 10000:
+
+        # Safeguard: downsample if we still have too many embeddings (prevents clustering hang)
+        max_allowed = self.config.max_embeddings or 5000
+        if len(embeddings) > max_allowed:
             logger.warning(
-                f"Very large number of embeddings ({len(embeddings)}). "
-                f"Clustering may take a long time. Consider reducing embed_window_sec or increasing embed_shift_sec."
+                f"Too many embeddings ({len(embeddings)} > {max_allowed}). "
+                f"Downsampling to {max_allowed} evenly-spaced embeddings to prevent clustering hang."
             )
+            # Keep evenly-spaced subset
+            indices = np.linspace(0, len(embeddings) - 1, max_allowed, dtype=int)
+            embeddings = [embeddings[i] for i in indices]
+            # Update windows to match
+            windows = [windows[i] for i in indices]
+            logger.info(f"Downsampled to {len(embeddings)} embeddings")
         try:
             X = np.vstack(embeddings)
             logger.info(f"Clustering {X.shape[0]} embeddings (dim={X.shape[1]})...")
@@ -1097,6 +1115,24 @@ class SpeakerDiarizer:
         clips: list[np.ndarray] = []
         meta: list[tuple[float, float]] = []  # (start, end)
 
+        # Calculate total speech duration for adaptive shift
+        total_speech_sec = sum(end - start for start, end in speech_regions)
+        adaptive_shift = self.config.embed_shift_sec
+
+        # For very long audio, automatically increase shift to reduce embeddings
+        if total_speech_sec > 1800:  # 30+ minutes of speech
+            # Estimate how many embeddings we'd create with default shift
+            estimated_embeddings = int(total_speech_sec / self.config.embed_shift_sec)
+            max_allowed = self.config.max_embeddings or 5000
+
+            if estimated_embeddings > max_allowed:
+                adaptive_shift = total_speech_sec / max_allowed
+                logger.warning(
+                    f"Long audio detected ({total_speech_sec/60:.1f} min speech). "
+                    f"Increasing embed_shift_sec from {self.config.embed_shift_sec:.2f}s to {adaptive_shift:.2f}s "
+                    f"to limit embeddings to ~{max_allowed} (prevents clustering hang)."
+                )
+
         for start_sec, end_sec in speech_regions:
             if end_sec - start_sec < self.config.min_embedtable_sec:
                 continue
@@ -1108,7 +1144,7 @@ class SpeakerDiarizer:
                     end_idx = int(win_end * sr)
                     clips.append(wav[start_idx:end_idx])
                     meta.append((cursor, win_end))
-                cursor += self.config.embed_shift_sec
+                cursor += adaptive_shift
 
         if not clips:
             return []
