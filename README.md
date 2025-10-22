@@ -250,6 +250,13 @@ export NUMEXPR_MAX_THREADS=4
 export TOKENIZERS_PARALLELISM=false
 ```
 
+### Local-first model resolution
+
+- DiaRemot now prefers models that already exist on disk. Every stage checks local paths and caches before attempting a network download.
+ - The CLI defaults to this behaviour. Pass `--remote-first` to `run`, `resume`, or `smoke` if you intentionally want to prefer fresh downloads.
+ - Need to target a different model directory for a particular invocation? Supply `--model-root D:/alt-models` (or set `DIAREMOT_MODEL_DIR`) and the pipeline will rebuild its search paths dynamically.
+- Programmatic integrations can control this via `build_pipeline_config({... 'local_first': False ...})` when a remote-first run is desired.
+
 ### Model Search Paths
 
 DiaRemot uses a priority-based model discovery system. For each model, the system searches these locations in order:
@@ -1024,4 +1031,3 @@ Special thanks to the open-source ML community.
 **License:** MIT
 
 [![Open in Cloud Shell](https://gstatic.com/cloudssh/images/open-btn.svg)](https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/tltrogl/diaremot2-on&cloudshell_git_branch=main&cloudshell_workspace=.&cloudshell_open_in_editor=README.md&show=ide%2Cterminal)
-

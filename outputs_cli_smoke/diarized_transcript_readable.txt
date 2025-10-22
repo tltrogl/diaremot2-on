@@ -1,0 +1,6 @@
+[00:00:00 - 00:00:03] Speaker_1
+  Text: Beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep beep be
+  Affect: emotion neutral; valence +0.00, arousal +0.00, dominance +0.00; hint neutral-status
+  Intent: status_update (top3: status_update 1.00, small_talk 0.00, opinion 0.00)
+  VAD: stable | SED: Sine wave, Busy signal, Dial tone | Noise tag: Sine wave
+  Duration: 3.00s | Speech rate: 2240.00 wpm

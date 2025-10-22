@@ -14,6 +14,7 @@ __all__ = [
     "configure_local_cache_env",
     "resolve_default_whisper_model",
     "iter_model_roots",
+    "set_primary_model_root",
 ]
 
 
@@ -197,6 +198,20 @@ def iter_model_roots() -> tuple[Path, ...]:
     """Return an ordered tuple of candidate model roots."""
 
     return MODEL_ROOTS
+
+
+def set_primary_model_root(path: Path) -> None:
+    """Override the primary model root and refresh cached search paths."""
+
+    global _PRIMARY_MODEL_ROOT, MODEL_ROOTS, DEFAULT_MODELS_ROOT, WINDOWS_MODELS_ROOT
+
+    resolved = Path(path).expanduser().resolve()
+    os.environ["DIAREMOT_MODEL_DIR"] = str(resolved)
+    _PRIMARY_MODEL_ROOT = resolved
+    MODEL_ROOTS = tuple(_discover_model_roots()) or (resolved,)
+    DEFAULT_MODELS_ROOT = MODEL_ROOTS[0]
+    if os.name == "nt":
+        WINDOWS_MODELS_ROOT = DEFAULT_MODELS_ROOT
 
 
 def _iter_whisper_candidates() -> list[Path]:

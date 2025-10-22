@@ -1080,7 +1080,8 @@ class EmotionIntentAnalyzer(EmotionAnalyzer):
                 self._ensure_intent_pipeline()
 
     def _select_onnx_model(self, model_dir: Path) -> Path | None:
-        for name in ("model_uint8.onnx", "model.onnx"):
+        # Prefer commonly shipped INT8 filename, then uint8/ generic name.
+        for name in ("model_int8.onnx", "model_uint8.onnx", "model.onnx"):
             candidate = model_dir / name
             if candidate.exists():
                 return candidate

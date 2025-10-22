@@ -5,6 +5,7 @@ from __future__ import annotations
 import array
 import json
 import math
+import os
 import shutil
 import subprocess
 from functools import lru_cache
@@ -14,8 +15,19 @@ from typing import Any, Optional
 
 import typer
 
+from .pipeline.runtime_env import DEFAULT_WHISPER_MODEL, set_primary_model_root
+
+# Disable rich-rendered help panels to avoid Click/Typer incompatibilities unless explicitly opted-in.
+_rich_pref = os.getenv("DIAREMOT_CLI_RICH", "").strip().lower()
+try:  # Typer <0.12.3 lacks rich_utils
+    if _rich_pref in {"1", "true", "yes", "on"}:
+        typer.rich_utils.USE_RICH = True  # type: ignore[attr-defined]
+    else:
+        typer.rich_utils.USE_RICH = False  # type: ignore[attr-defined]
+except AttributeError:
+    pass
+
 from .pipeline.logging_utils import _make_json_safe
-from .pipeline.runtime_env import DEFAULT_WHISPER_MODEL
 
 app = typer.Typer(help="High level CLI wrapper for the DiaRemot audio pipeline.")
 
@@ -68,6 +80,12 @@ BUILTIN_PROFILES: dict[str, dict[str, Any]] = {
         "ignore_tx_cache": False,
     },
 }
+
+
+def _apply_model_root(model_root: Optional[Path]) -> None:
+    if model_root is None:
+        return
+    set_primary_model_root(Path(model_root))
 
 
 def _load_profile(profile: Optional[str]) -> dict[str, Any]:
@@ -403,10 +421,11 @@ def run(
         help="Enable gentle noise reduction.",
         is_flag=True,
     ),
-    enable_sed: bool = typer.Option(
-        True,
-        "--enable-sed/--disable-sed",
-        help="Toggle background sound event detection stage.",
+    disable_sed: bool = typer.Option(
+        False,
+        "--disable-sed",
+        help="Disable background sound event detection stage.",
+        is_flag=True,
     ),
     sed_mode: str = typer.Option("auto", help="SED mode: global, timeline, or auto."),
     sed_window_sec: float = typer.Option(1.0, help="Timeline SED window length (seconds)."),
@@ -422,10 +441,11 @@ def run(
         None,
         help="Optional CSV mapping AudioSet labels to collapsed groups for timeline SED.",
     ),
-    sed_timeline_jsonl: bool = typer.Option(
+    sed_write_jsonl: bool = typer.Option(
         False,
-        "--sed-write-jsonl/--sed-no-jsonl",
+        "--sed-write-jsonl",
         help="Write per-frame SED debug JSONL alongside events timeline.",
+        is_flag=True,
     ),
     chunk_enabled: Optional[bool] = typer.Option(
         None,
@@ -457,6 +477,17 @@ def run(
         help="Enable CPU optimised diarizer wrapper.",
         is_flag=True,
     ),
+    model_root: Optional[Path] = typer.Option(
+        None,
+        "--model-root",
+        help="Override the primary models directory for this run.",
+    ),
+    remote_first: bool = typer.Option(
+        False,
+        "--remote-first",
+        help="Skip local-first routing and allow remote downloads before local cache checks.",
+        is_flag=True,
+    ),
     clear_cache: bool = typer.Option(
         False,
         "--clear-cache",
@@ -464,6 +495,7 @@ def run(
         is_flag=True,
     ),
 ):
+    _apply_model_root(model_root)
     run_overrides: dict[str, Any] = {
         "registry_path": _normalise_path(registry_path),
         "ahc_distance_threshold": ahc_distance_threshold,
@@ -498,7 +530,7 @@ def run(
         "vad_min_silence_sec": vad_min_silence_sec,
         "vad_speech_pad_sec": vad_speech_pad_sec,
         "vad_backend": vad_backend,
-        "enable_sed": enable_sed,
+        "enable_sed": not disable_sed,
         "sed_mode": sed_mode,
         "sed_window_sec": sed_window_sec,
         "sed_hop_sec": sed_hop_sec,
@@ -506,7 +538,7 @@ def run(
         "sed_exit": sed_exit,
         "sed_merge_gap": sed_merge_gap,
         "sed_classmap_csv": _normalise_path(sed_classmap),
-        "sed_timeline_jsonl": sed_timeline_jsonl,
+        "sed_timeline_jsonl": sed_write_jsonl,
         "disable_energy_vad_fallback": disable_energy_vad_fallback,
         "energy_gate_db": energy_gate_db,
         "energy_hop_sec": energy_hop_sec,
@@ -514,6 +546,7 @@ def run(
         "asr_segment_timeout": asr_segment_timeout,
         "asr_batch_timeout": asr_batch_timeout,
         "cpu_diarizer": cpu_diarizer,
+        "local_first": not remote_first,
     }
 
     if sed_min_dur is not None:
@@ -551,10 +584,11 @@ def smoke(
     ),
     duration: float = typer.Option(3.0, help="Duration of generated sample audio in seconds."),
     sample_rate: int = typer.Option(16000, help="Sample rate for generated audio."),
-    disable_affect: bool = typer.Option(
-        True,
-        "--disable-affect/--enable-affect",
-        help="Disable affect stages for a faster smoke test run.",
+    enable_affect: bool = typer.Option(
+        False,
+        "--enable-affect",
+        help="Include affect stages during the smoke test.",
+        is_flag=True,
     ),
     ffmpeg_bin: Optional[Path] = typer.Option(
         None,
@@ -567,8 +601,21 @@ def smoke(
         help="Retain the generated sample WAV after the run completes.",
         is_flag=True,
     ),
+    model_root: Optional[Path] = typer.Option(
+        None,
+        "--model-root",
+        help="Override the primary models directory for this smoke run.",
+    ),
+    remote_first: bool = typer.Option(
+        False,
+        "--remote-first",
+        help="Skip local-first routing and allow remote downloads before local cache checks.",
+        is_flag=True,
+    ),
 ):
     """Generate a demo audio file and execute the pipeline against it."""
+
+    _apply_model_root(model_root)
 
     outdir = outdir.expanduser().resolve()
     outdir.mkdir(parents=True, exist_ok=True)
@@ -590,7 +637,7 @@ def smoke(
 
     smoke_overrides: dict[str, Any] = {
         "registry_path": _normalise_path(Path("speaker_registry.json")),
-        "disable_affect": disable_affect,
+        "disable_affect": not enable_affect,
         "affect_backend": "onnx",
         "enable_sed": True,
         "noise_reduction": False,
@@ -599,6 +646,7 @@ def smoke(
         "chunk_size_minutes": None,
         "chunk_overlap_seconds": None,
         "vad_backend": "auto",
+        "local_first": not remote_first,
     }
 
     config = _assemble_config(profile, smoke_overrides)
@@ -680,11 +728,6 @@ def resume(
         help="Enable gentle noise reduction.",
         is_flag=True,
     ),
-    enable_sed: bool = typer.Option(
-        True,
-        "--enable-sed/--disable-sed",
-        help="Toggle background sound event detection stage.",
-    ),
     chunk_enabled: Optional[bool] = typer.Option(
         None,
         "--chunk-enabled",
@@ -715,7 +758,20 @@ def resume(
         help="Enable CPU optimised diarizer wrapper.",
         is_flag=True,
     ),
+    model_root: Optional[Path] = typer.Option(
+        None,
+        "--model-root",
+        help="Override the primary models directory for this resume run.",
+    ),
+    remote_first: bool = typer.Option(
+        False,
+        "--remote-first",
+        help="Skip local-first routing and allow remote downloads before local cache checks.",
+        is_flag=True,
+    ),
 ):
+    _apply_model_root(model_root)
+
     resume_overrides: dict[str, Any] = {
         "registry_path": _normalise_path(registry_path),
         "ahc_distance_threshold": ahc_distance_threshold,
@@ -755,6 +811,7 @@ def resume(
         "asr_segment_timeout": asr_segment_timeout,
         "asr_batch_timeout": asr_batch_timeout,
         "cpu_diarizer": cpu_diarizer,
+        "local_first": not remote_first,
     }
 
     config = _assemble_config(profile, resume_overrides)
@@ -772,9 +829,20 @@ def resume(
 
 @app.command()
 def diagnostics(
-    strict: bool = typer.Option(False, help="Require minimum dependency versions."),
+    model_root: Optional[Path] = typer.Option(
+        None,
+        "--model-root",
+        help="Override the primary models directory before diagnostics.",
+    ),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Require minimum dependency versions.",
+        is_flag=True,
+    ),
 ):
     """Run dependency diagnostics and emit a JSON summary."""
+    _apply_model_root(model_root)
 
     result = core_diagnostics(require_versions=strict)
     typer.echo(json.dumps(result, indent=2))

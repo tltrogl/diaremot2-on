@@ -309,59 +309,142 @@ class ModelManager:
             compute_type = "float32"
 
         model_size = config["model_size"]
+        failure_notes: list[str] = []
 
-        # Check if it's a local path first
-        _local_only = False
+        # Determine preference for local vs remote based on configuration
+        prefer_local = True if config.get("local_first", True) else False
+        # If a concrete filesystem path is given, use strict local-only semantics first.
+        is_local_path = False
         try:
             if isinstance(model_size, str) and Path(str(model_size)).exists():
-                _local_only = True
-                self.logger.info(f"Using local model path: {model_size}")
+                is_local_path = True
         except Exception:
-            _local_only = False
+            is_local_path = False
 
-        # Handle HuggingFace model paths for faster-whisper
-        if not _local_only and "/" in model_size and "faster-whisper" in model_size:
-            # This is a HuggingFace model path like "deepdml/faster-whisper-large-v3-turbo-ct2"
-            _local_only = False
+        def _try_load(identifier: str | Path, local_only: bool):
+            kwargs = {
+                "device": "cpu",
+                "compute_type": compute_type,
+                "cpu_threads": config.get("cpu_threads", 1),
+                "download_root": None,
+                "local_files_only": bool(local_only),
+            }
+            return WhisperModel(str(identifier), **kwargs)
 
-        model_kwargs = {
-            "device": "cpu",
-            "compute_type": compute_type,
-            "cpu_threads": config.get("cpu_threads", 1),
-            "download_root": None,
-            "local_files_only": _local_only,
-        }
+        # 1) If a filesystem path is provided, enforce local-only once.
+        if is_local_path:
+            try:
+                model = _try_load(model_size, local_only=True)
+                self.logger.info(f"Loaded faster-whisper (local path): {model_size}")
+                return model
+            except Exception as e:
+                self.last_errors["faster_whisper_load"] = str(e)
+                self.logger.warning(
+                    f"Local faster-whisper path failed; continuing to cached/remote fallbacks: {e}"
+                )
 
+        # 1b) If a directory with this name exists under known model roots, treat it as local.
         try:
-            model = WhisperModel(model_size, **model_kwargs)
-            self.logger.info(f"Loaded faster-whisper: {model_size}")
-            return model
-        except Exception as e:
-            self.last_errors["faster_whisper_load"] = str(e)
-            self.logger.warning(f"Failed to load {model_size}, trying fallback models: {e}")
+            candidate_dirs = []
+            rel_candidates: list[Path] = []
+            if isinstance(model_size, str):
+                rel_candidates.extend(
+                    [
+                        Path(model_size),
+                        Path("faster-whisper") / model_size,
+                        Path("ct2") / model_size,
+                    ]
+                )
+            for root in iter_model_roots():
+                for rel in rel_candidates:
+                    candidate = Path(root) / rel
+                    if candidate.exists():
+                        candidate_dirs.append(candidate)
+        except Exception:
+            candidate_dirs = []
 
-            # Try fallback models in order of preference
-            fallback_models = [
-                "large-v3",
-                "large-v2",
-                "medium",
-                "small",
-                "base",
-                "tiny",
-            ]
-            for fallback in fallback_models:
+        for candidate in candidate_dirs:
+            try:
+                model = _try_load(candidate, local_only=True)
+                self.logger.info(f"Loaded faster-whisper (model dir): {candidate}")
+                return model
+            except Exception as e:
+                note = f"dir={candidate} local_only=True: {e}"
+                failure_notes.append(note)
+                self.last_errors[f"faster_whisper_load:{candidate}"] = str(e)
+                self.logger.warning(
+                    f"Candidate local faster-whisper directory {candidate} failed: {e}"
+                )
+
+        # 2) For model IDs/names: honor local_first preference.
+        order = (True, False) if prefer_local else (False, True)
+        for local_only in order:
+            try:
+                model = _try_load(model_size, local_only=local_only)
+                source = "local" if local_only else "remote"
+                self.logger.info(f"Loaded faster-whisper ({source}): {model_size}")
+                return model
+            except Exception as e:
+                self.last_errors[f"faster_whisper_load:{local_only}"] = str(e)
+                failure_notes.append(
+                    f"model={model_size} local_only={local_only}: {e}"
+                )
+                if local_only and prefer_local:
+                    self.logger.info(
+                        f"Model not found in local cache; will attempt download if permitted: {e}"
+                    )
+                elif not local_only and not prefer_local:
+                    self.logger.warning(
+                        f"Remote load for faster-whisper failed: {e}; trying fallbacks"
+                    )
+
+        # Try fallback models in order of preference
+        fallback_models = [
+            "large-v3",
+            "large-v2",
+            "medium",
+            "small",
+            "base",
+            "tiny",
+        ]
+        for fallback in fallback_models:
+            for local_only in order:
                 try:
-                    self.logger.info(f"Trying fallback model: {fallback}")
-                    model = WhisperModel(fallback, **model_kwargs)
-                    self.logger.info(f"Successfully loaded fallback faster-whisper: {fallback}")
+                    self.logger.info(
+                        f"Trying fallback model: {fallback} (local_only={local_only})"
+                    )
+                    model = WhisperModel(
+                        fallback,
+                        device="cpu",
+                        compute_type=compute_type,
+                        cpu_threads=config.get("cpu_threads", 1),
+                        download_root=None,
+                        local_files_only=local_only,
+                    )
+                    self.logger.info(
+                        f"Successfully loaded fallback faster-whisper: {fallback}"
+                    )
                     return model
                 except Exception as fallback_e:
-                    self.last_errors[f"faster_whisper_load:{fallback}"] = str(fallback_e)
-                    self.logger.warning(f"Fallback {fallback} failed: {fallback_e}")
+                    self.last_errors[
+                        f"faster_whisper_load:{fallback}:{local_only}"
+                    ] = str(fallback_e)
+                    self.logger.warning(
+                        f"Fallback {fallback} (local_only={local_only}) failed: {fallback_e}"
+                    )
+                    failure_notes.append(
+                        f"fallback={fallback} local_only={local_only}: {fallback_e}"
+                    )
                     continue
 
-            # If all faster-whisper models fail, raise the original error
-            raise e
+        msg = [
+            "No faster-whisper model could be loaded using local cache or remote fallbacks.",
+            "Ensure the desired CTranslate2 weights exist under DIAREMOT_MODEL_DIR",
+            "or rerun the CLI with --remote-first to allow downloads.",
+        ]
+        if failure_notes:
+            msg.append("Attempts:" + " | ".join(failure_notes))
+        raise RuntimeError(" ".join(msg))
 
     def _load_openai_whisper(self, config: dict[str, Any]) -> Any:
         """Load OpenAI whisper with CPU optimization"""
@@ -449,6 +532,7 @@ class AsyncTranscriber:
         cpu_threads: int | None = None,
         asr_backend: str | None = None,
         model_concurrency: int | None = None,
+        local_first: bool | None = None,
     ):
         cpu_threads_value = 1
         if cpu_threads is not None:
@@ -475,6 +559,7 @@ class AsyncTranscriber:
             "batch_timeout_sec": float(batch_timeout_sec),
             "max_concurrent_segments": int(max_concurrent_segments),
         }
+        self.config["local_first"] = True if local_first is None else bool(local_first)
         if compute_type is not None:
             try:
                 self.config["compute_type"] = str(compute_type)
@@ -1766,3 +1851,5 @@ if __name__ == "__main__":
 
     if not any([args.test, args.benchmark, args.info]):
         print("Use --test, --benchmark, or --info. See --help for options.")
+# Runtime helpers
+from .runtime_env import iter_model_roots

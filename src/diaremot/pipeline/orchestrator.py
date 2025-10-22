@@ -355,6 +355,8 @@ class AudioAnalysisPipelineV2:
                 "compute_type": cfg.get("compute_type", None),
                 "cpu_threads": cfg.get("cpu_threads", None),
                 "asr_backend": cfg.get("asr_backend", "auto"),
+                # Local-first routing for model fetching/caching
+                "local_first": cfg.get("local_first", True),
                 # Timeouts
                 "segment_timeout_sec": cfg.get("segment_timeout_sec", 300.0),
                 "batch_timeout_sec": cfg.get("batch_timeout_sec", 1200.0),

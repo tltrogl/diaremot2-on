@@ -108,7 +108,7 @@ A) Plan
 Name exact files/symbols and the one-clause reason for each edit.
 
 B) Code Changes
-Apply surgical unified diffs limited to scope; preserve style/imports/APIs. Emit per-file diffs.
+Apply surgical and thorough unified diffs limited to scope; preserve style/imports/APIs. Emit per-file diffs.
 
 C) Verification Gates (run all, capture exit codes + trimmed logs)
 
@@ -211,7 +211,7 @@ Hints/Flags: affect_hint, error_flags
 
 7) Style & Scope
 
-Surgical diffs only; no drive-by refactors.
+Surgical but thorough diffs only.
 
 Modify files inside the repo unless directed otherwise.
 

@@ -329,6 +329,9 @@ For **each model**, DiaRemot searches in this order:
 First existing file WINS.
 ```
 
+- **Local-first by default.** All pipeline stages now honour this search order before attempting any network downloads. The Typer CLI exposes a `--remote-first` flag (and the config key `local_first=False`) for the rare cases where you want the downloader to prefer fresh snapshots.
+- Override the primary model directory per run with the CLI's `--model-root /path/to/models` option (or set `DIAREMOT_MODEL_DIR`) when you need to test alternative bundles.
+
 ---
 
 ## Quick Verification Script
