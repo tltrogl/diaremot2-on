@@ -148,6 +148,8 @@ class DiarizationConfig:
     embed_shift_sec: float = 0.75
     min_embedtable_sec: float = 0.6
     topk_windows: int = 3
+    # Long audio optimization: limit max embeddings to prevent clustering hangs
+    max_embeddings: int | None = 5000  # None = unlimited (not recommended for files >30min)
     # Clustering
     ahc_linkage: str = "average"
     ahc_distance_threshold: float = 0.15
@@ -509,6 +511,16 @@ class _SileroWrapper:
         num_chunks = audio.shape[0] // chunk_size
         if num_chunks == 0:
             return []
+        duration_sec = orig_samples / float(sr)
+        logger.info(f"Starting ONNX VAD: {duration_sec:.1f}s audio → {num_chunks} chunks to process")
+
+        # Warn if this will take a very long time
+        if num_chunks > 100000:  # ~3+ hours of audio
+            est_minutes = num_chunks / 60000  # very rough estimate: ~1000 chunks/sec on typical CPU
+            logger.warning(
+                f"Very long audio file detected! Processing {num_chunks} chunks may take "
+                f"~{est_minutes:.0f} minutes. Consider splitting the file into smaller segments."
+            )
         state_shape = list(self._onnx_state_shape or (2, 1, 128))
         if len(state_shape) < 3:
             state_shape = [2, batch_size, 128]
@@ -523,7 +535,12 @@ class _SileroWrapper:
         sr_array = np.array(sr, dtype=np.int64)
         chunk_probs: list[float] = []
         offset = 0
-        for _ in range(num_chunks):
+        # Log progress for long audio to help diagnose hangs
+        log_every = max(100, num_chunks // 10) if num_chunks > 1000 else 0
+        for chunk_idx in range(num_chunks):
+            if log_every > 0 and chunk_idx > 0 and chunk_idx % log_every == 0:
+                progress_pct = (chunk_idx / num_chunks) * 100
+                logger.info(f"ONNX VAD progress: {chunk_idx}/{num_chunks} chunks ({progress_pct:.1f}%)")
             chunk = audio[offset : offset + chunk_size]
             offset += chunk_size
             chunk = chunk.reshape(batch_size, -1)
@@ -946,10 +963,14 @@ class SpeakerDiarizer:
             sr = self.config.target_sr
         else:
             wav = wav.astype(np.float32)
+        duration_min = wav.size / sr / 60.0
+        logger.info(f"Starting diarization: {duration_min:.1f} min audio at {sr} Hz")
         # Step 1: VAD
+        logger.info("Step 1/5: Running Voice Activity Detection...")
         speech_regions = self.vad.detect(
             wav, sr, self.config.vad_min_speech_sec, self.config.vad_min_silence_sec
         )
+        logger.info(f"VAD complete: {len(speech_regions)} speech regions detected")
         # Fallback VAD if Silero failed
         if not speech_regions and self.config.allow_energy_vad_fallback:
             logger.info("Using energy VAD fallback")
@@ -960,7 +981,9 @@ class SpeakerDiarizer:
             logger.warning("No speech detected by VAD")
             return []
         # Step 2: Extract embeddings
+        logger.info("Step 2/5: Extracting speaker embeddings...")
         windows = self._extract_embedding_windows(wav, sr, speech_regions)
+        logger.info(f"Embedding extraction complete: {len(windows)} windows extracted")
         if len(windows) < 2:
             # Single speaker case
             turn = {
@@ -972,12 +995,28 @@ class SpeakerDiarizer:
             }
             return [turn]
         # Step 3: Cluster
+        logger.info("Step 3/5: Clustering speaker embeddings...")
         embeddings = [w["embedding"] for w in windows if w["embedding"] is not None]
         if not embeddings:
             logger.warning("No valid embeddings extracted")
             return []
+
+        # Safeguard: downsample if we still have too many embeddings (prevents clustering hang)
+        max_allowed = self.config.max_embeddings or 5000
+        if len(embeddings) > max_allowed:
+            logger.warning(
+                f"Too many embeddings ({len(embeddings)} > {max_allowed}). "
+                f"Downsampling to {max_allowed} evenly-spaced embeddings to prevent clustering hang."
+            )
+            # Keep evenly-spaced subset
+            indices = np.linspace(0, len(embeddings) - 1, max_allowed, dtype=int)
+            embeddings = [embeddings[i] for i in indices]
+            # Update windows to match
+            windows = [windows[i] for i in indices]
+            logger.info(f"Downsampled to {len(embeddings)} embeddings")
         try:
             X = np.vstack(embeddings)
+            logger.info(f"Clustering {X.shape[0]} embeddings (dim={X.shape[1]})...")
             backend = (self.config.clustering_backend or "ahc").strip().lower()
             labels = None
             if backend == "spectral" and _SpectralClusterer is not None:
@@ -1010,6 +1049,7 @@ class SpeakerDiarizer:
                 if backend == "spectral" and _SpectralClusterer is None:
                     logger.info("spectralcluster not installed; falling back to AHC")
                 # Default AHC
+                logger.info(f"Starting AHC clustering (n={X.shape[0]}, speaker_limit={self.config.speaker_limit})...")
                 if self.config.speaker_limit:
                     clusterer = _agglo(
                         distance_threshold=None,
@@ -1024,6 +1064,7 @@ class SpeakerDiarizer:
                         metric="cosine",
                     )
                 labels = clusterer.fit_predict(X)
+                logger.info(f"AHC clustering complete: {len(set(labels))} clusters found")
         except Exception as e:
             logger.error(f"Clustering failed: {e}")
             labels = np.zeros(len(embeddings), dtype=int)
@@ -1031,8 +1072,11 @@ class SpeakerDiarizer:
         for w, label in zip(windows, labels, strict=False):
             w["speaker"] = f"Speaker_{label + 1}"
         # Step 4: FIXED - Build continuous turns
+        logger.info("Step 4/5: Building continuous speaker segments...")
         turns = self._build_continuous_segments(windows, speech_regions)
+        logger.info(f"Built {len(turns)} initial speaker turns")
         # Step 5: Post-process
+        logger.info("Step 5/5: Post-processing and merging segments...")
         turns = self._merge_short_gaps(turns)
         # Reduce micro-turn fragmentation by enforcing a minimum turn duration
         turns = self._enforce_min_turn_duration(turns)
@@ -1058,6 +1102,8 @@ class SpeakerDiarizer:
         turns = self._assign_speaker_names(turns)
         # Store for centroid updates
         self._last_turns = turns
+        final_speakers = len(set(t.speaker for t in turns))
+        logger.info(f"Diarization complete: {len(turns)} turns, {final_speakers} speakers identified")
         return [self._turn_to_dict(t) for t in turns]
 
     def _extract_embedding_windows(
@@ -1068,6 +1114,24 @@ class SpeakerDiarizer:
         # ECAPA ONNX inference calls. This avoids per-window session.run() overhead.
         clips: list[np.ndarray] = []
         meta: list[tuple[float, float]] = []  # (start, end)
+
+        # Calculate total speech duration for adaptive shift
+        total_speech_sec = sum(end - start for start, end in speech_regions)
+        adaptive_shift = self.config.embed_shift_sec
+
+        # For very long audio, automatically increase shift to reduce embeddings
+        if total_speech_sec > 1800:  # 30+ minutes of speech
+            # Estimate how many embeddings we'd create with default shift
+            estimated_embeddings = int(total_speech_sec / self.config.embed_shift_sec)
+            max_allowed = self.config.max_embeddings or 5000
+
+            if estimated_embeddings > max_allowed:
+                adaptive_shift = total_speech_sec / max_allowed
+                logger.warning(
+                    f"Long audio detected ({total_speech_sec/60:.1f} min speech). "
+                    f"Increasing embed_shift_sec from {self.config.embed_shift_sec:.2f}s to {adaptive_shift:.2f}s "
+                    f"to limit embeddings to ~{max_allowed} (prevents clustering hang)."
+                )
 
         for start_sec, end_sec in speech_regions:
             if end_sec - start_sec < self.config.min_embedtable_sec:
@@ -1080,7 +1144,7 @@ class SpeakerDiarizer:
                     end_idx = int(win_end * sr)
                     clips.append(wav[start_idx:end_idx])
                     meta.append((cursor, win_end))
-                cursor += self.config.embed_shift_sec
+                cursor += adaptive_shift
 
         if not clips:
             return []
@@ -1096,10 +1160,15 @@ class SpeakerDiarizer:
 
         embeddings: list[np.ndarray | None] = []
         if len(clips) <= max_batch:
+            logger.info(f"Processing {len(clips)} ECAPA embeddings in single batch...")
             embeddings = self.ecapa.embed_batch(clips, sr) or []
         else:
             # Chunk to keep RAM bounded
+            logger.info(f"Processing {len(clips)} ECAPA embeddings in batches of {max_batch}...")
             for i in range(0, len(clips), max_batch):
+                batch_num = (i // max_batch) + 1
+                total_batches = (len(clips) + max_batch - 1) // max_batch
+                logger.info(f"ECAPA batch {batch_num}/{total_batches} ({i}/{len(clips)} clips)")
                 batch = clips[i : i + max_batch]
                 part = self.ecapa.embed_batch(batch, sr) or []
                 embeddings.extend(part)
