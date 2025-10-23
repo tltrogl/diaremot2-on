@@ -28,6 +28,22 @@ LINUX_CACHE_BASE = Path("/srv/.cache")
 PROJECT_ROOT_MARKERS = ("pyproject.toml", ".git")
 
 
+_MODEL_SENTINELS: tuple[tuple[str, ...], ...] = (
+    ("Diarization", "ecapa-onnx", "ecapa_tdnn.onnx"),
+    ("Diarization", "silaro_vad", "silero_vad.onnx"),
+    ("Affect", "ser8", "model.int8.onnx"),
+    ("Affect", "ser8", "model.onnx"),
+    ("Affect", "VAD_dim", "model.onnx"),
+    ("Affect", "sed_panns", "model.onnx"),
+    ("text_emotions", "model.int8.onnx"),
+    ("text_emotions", "model.onnx"),
+    ("intent", "model_int8.onnx"),
+    ("intent", "model.onnx"),
+    ("tiny.en", "model.bin"),
+    ("faster-whisper", "tiny.en", "model.bin"),
+)
+
+
 def _find_project_root(start: Path) -> Path | None:
     """Walk upward from ``start`` until a project marker is found."""
 
@@ -39,6 +55,39 @@ def _find_project_root(start: Path) -> Path | None:
             if (candidate / marker).exists():
                 return candidate
     return None
+
+
+def _is_cache_dir(path: Path) -> bool:
+    """Return True when ``path`` appears to represent a cache location."""
+
+    parts = {part.lower() for part in path.parts}
+    return any(part.startswith(".cache") or part.endswith(".cache") for part in parts)
+
+
+def _has_model_artifacts(root: Path) -> bool:
+    """Heuristically detect whether ``root`` contains installed model files."""
+
+    try:
+        if not root.exists():
+            return False
+    except OSError:
+        return False
+
+    try:
+        for child in root.iterdir():
+            if child.is_file() and child.suffix.lower() == ".onnx":
+                return True
+    except OSError:
+        pass
+
+    for relative in _MODEL_SENTINELS:
+        try:
+            if (root.joinpath(*relative)).exists():
+                return True
+        except OSError:
+            continue
+
+    return False
 
 
 def _candidate_cache_roots(script_path: Path) -> Iterable[Path]:
@@ -137,11 +186,22 @@ configure_local_cache_env()
 
 
 def _default_model_root() -> Path:
-    preferred = (
-        WINDOWS_CANONICAL_MODEL_ROOT if os.name == "nt" else LINUX_CANONICAL_MODEL_ROOT
+    canonical = WINDOWS_CANONICAL_MODEL_ROOT if os.name == "nt" else LINUX_CANONICAL_MODEL_ROOT
+    project_root = _find_project_root(Path(__file__).resolve())
+
+    candidates: list[Path] = [canonical]
+    if project_root is not None:
+        candidates.append(project_root / "models")
+    candidates.extend(
+        [
+            Path.cwd() / "models",
+            Path.home() / "models",
+        ]
     )
-    if _ensure_writable_directory(preferred):
-        return preferred
+
+    for candidate in candidates:
+        if _has_model_artifacts(candidate) or _ensure_writable_directory(candidate):
+            return candidate
 
     fallback = Path.cwd() / ".cache" / "models"
     _ensure_writable_directory(fallback)
@@ -186,6 +246,17 @@ def _discover_model_roots() -> list[Path]:
             continue
         seen.add(key)
         deduped.append(candidate)
+    local_roots = [root for root in deduped if not _is_cache_dir(root) and _has_model_artifacts(root)]
+    if local_roots:
+        primary_local = local_roots[0]
+        ordered: list[Path] = [primary_local]
+        for root in deduped:
+            if root == primary_local:
+                continue
+            if _is_cache_dir(root):
+                continue
+            ordered.append(root)
+        deduped = ordered
     return deduped
 
 
