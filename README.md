@@ -42,6 +42,19 @@ DiaRemot is a production-ready, CPU-only speech intelligence system that process
 10. **speaker_rollups** – Per-speaker statistical summaries
 11. **outputs** – Generate CSV, JSON, HTML, PDF reports
 
+### Modular orchestration
+
+- Core mixins live in `src/diaremot/pipeline/core/` and provide targeted responsibilities for
+  component initialisation, affect handling, paralinguistics fallbacks, and output generation.
+- The public orchestrator (`src/diaremot/pipeline/orchestrator.py`) now composes these mixins,
+  surfaces structured `StageExecutionError` instances from `src/diaremot/pipeline/errors.py`, and
+  improves failure diagnostics without altering the 11-stage contract.
+- Component bootstrap logic in `ComponentFactoryMixin` raises these structured errors as soon as a
+  dependency is missing, keeping cache and checkpoint handling consistent with pre-refactor runs.
+- The paralinguistics stack is now a proper package under `src/diaremot/affect/paralinguistics/`,
+  splitting configuration, audio/voice quality primitives, aggregate analytics, benchmarking, and
+  the CLI into focused modules while preserving the legacy `extract` API for pipeline callers.
+
 ### Data Flow Diagram
 
 ```
@@ -172,6 +185,8 @@ py -3.11 -m venv .venv
 
 # 3. Install dependencies
 python -m pip install -U pip wheel setuptools
+pip install -r requirements.txt
+# Optional (development): keep editable install for local code changes
 pip install -e .
 
 # 5. Verify installation
@@ -203,6 +218,8 @@ source .venv/bin/activate
 
 # 3. Install dependencies
 pip install -U pip wheel setuptools
+pip install -r requirements.txt
+# Optional (development): keep editable install for local code changes
 pip install -e .
 
 # 4. Verify installation
@@ -212,7 +229,8 @@ python -m diaremot.cli diagnostics
 ### Development Setup
 
 ```bash
-# Install with dev dependencies
+# Install runtime + dev dependencies
+pip install -r requirements.txt
 pip install -e ".[dev]"
 
 # Run tests
@@ -278,6 +296,61 @@ DiaRemot uses a priority-based model discovery system. For each model, the syste
 ---
 
 ## Model Assets
+
+### Downloading the official bundle (v2.AI)
+
+- Download the curated model pack published at
+  [tltrogl/diaremot2-ai · v2.AI](https://github.com/tltrogl/diaremot2-ai/releases/tag/v2.AI).
+- Codex Cloud workers automatically pull `models.zip` from this release; mirror
+  the same archive locally for parity with production.
+- Verify the checksum before extracting so you know the asset matches CI:
+
+```bash
+curl -L https://github.com/tltrogl/diaremot2-ai/releases/download/v2.AI/models.zip -o models.zip
+sha256sum models.zip  # Expect 3cc2115f4ef7cd4f9e43cfcec376bf56ea2a8213cb760ab17b27edbc2cac206c
+unzip -q models.zip -d ./models
+```
+
+`models.zip.sha256` in the repository mirrors the expected hash for quick
+automation-friendly validation.
+
+The archive unpacks into the alias-aware structure expected by the refactored
+affect stack:
+
+```
+models/
+├── bart/                # Intent (BART-MNLI) ONNX + tokenizer JSONs
+├── ecapa_onnx/          # Speaker embeddings
+├── goemotions-onnx/     # Text emotion ONNX bundle
+├── panns/               # Sound event detection
+├── ser8-onnx/           # Speech emotion ONNX bundle
+├── faster-whisper-tiny.en/  # Auto-downloaded on first transcription run
+└── silero_vad.onnx      # Root-level Silero VAD file
+```
+
+> **Note:** The v2.AI release does **not** include the dimensional VAD model
+> (`affect/vad_dim/`). Runs will emit neutral valence/arousal/dominance scores
+> until the directory is populated manually (internal export or Hugging Face
+> conversion). This is treated as a warning during smoke tests.
+
+### Smoke test (Codex Cloud parity)
+
+After installing dependencies and extracting `models.zip`, validate the runtime
+with the full CPU pipeline:
+
+```bash
+PYTHONPATH=src \
+  HF_HOME=./.cache \
+  python -m diaremot.cli smoke \
+    --outdir /tmp/smoke_test \
+    --model-root ./models \
+    --enable-affect
+```
+
+The first execution downloads Faster-Whisper (CTranslate2 tiny.en) and may reach
+Hugging Face to fetch tokenizer metadata for BART. Subsequent runs are fully
+offline. Confirm that all 11 stages report `PASS` and review the `issues`
+section in the final JSON for optional warnings (e.g., missing VAD_dim).
 
 ### Required ONNX Models (~2.8GB total)
 
@@ -592,6 +665,12 @@ print(f"Output directory: {result['out_dir']}")
 - soundfile ≥0.12 (I/O)
 - resampy ≥0.4.3 (high-quality resampling)
 - pydub ≥0.25 (audio utilities)
+
+> Optional signal libraries are discovered lazily via `importlib.util.find_spec` so
+> the paralinguistics stage can warn and fall back gracefully if librosa, scipy, or
+> Parselmouth are missing at runtime.
+> The pipeline explicitly imports `importlib.util` to keep this probe available even
+> in embedded Python builds where attribute access on `importlib` may be limited.
 
 **ML/NLP:**
 - CTranslate2 ≥4.2,<5.0 (ASR backend)

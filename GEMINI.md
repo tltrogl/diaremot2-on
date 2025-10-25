@@ -84,11 +84,11 @@ PIPELINE_STAGES = [
 
 ### Core Components
 
-**Orchestrator:** `src/diaremot/pipeline/orchestrator.py`
-- Manages stage execution
-- Handles checkpointing/resume
-- Computes adaptive VAD thresholds
-- Coordinates resource cleanup
+- **Orchestrator:** `src/diaremot/pipeline/orchestrator.py`
+  - Composes mixins from `src/diaremot/pipeline/core/` for component initialisation, affect fallbacks, and outputs
+  - Handles checkpointing/resume
+  - Computes adaptive VAD thresholds
+  - Coordinates resource cleanup and raises `StageExecutionError` when a stage fails
 
 **State Object:** `src/diaremot/pipeline/stages/base.py::PipelineState`
 - Mutable dataclass passed between stages
