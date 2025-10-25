@@ -42,6 +42,19 @@ DiaRemot is a production-ready, CPU-only speech intelligence system that process
 10. **speaker_rollups** – Per-speaker statistical summaries
 11. **outputs** – Generate CSV, JSON, HTML, PDF reports
 
+### Modular orchestration
+
+- Core mixins live in `src/diaremot/pipeline/core/` and provide targeted responsibilities for
+  component initialisation, affect handling, paralinguistics fallbacks, and output generation.
+- The public orchestrator (`src/diaremot/pipeline/orchestrator.py`) now composes these mixins,
+  surfaces structured `StageExecutionError` instances from `src/diaremot/pipeline/errors.py`, and
+  improves failure diagnostics without altering the 11-stage contract.
+- Component bootstrap logic in `ComponentFactoryMixin` raises these structured errors as soon as a
+  dependency is missing, keeping cache and checkpoint handling consistent with pre-refactor runs.
+- The paralinguistics stack is now a proper package under `src/diaremot/affect/paralinguistics/`,
+  splitting configuration, audio/voice quality primitives, aggregate analytics, benchmarking, and
+  the CLI into focused modules while preserving the legacy `extract` API for pipeline callers.
+
 ### Data Flow Diagram
 
 ```
@@ -278,6 +291,23 @@ DiaRemot uses a priority-based model discovery system. For each model, the syste
 ---
 
 ## Model Assets
+
+### Downloading the official bundle (v2.AI)
+
+- Download the curated model pack published at
+  [tltrogl/diaremot2-ai · v2.AI](https://github.com/tltrogl/diaremot2-ai/releases/tag/v2.AI).
+- Codex Cloud workers automatically pull `models.zip` from this release; mirror
+  the same archive locally for parity with production.
+- Verify the checksum before extracting so you know the asset matches CI:
+
+```bash
+curl -L https://github.com/tltrogl/diaremot2-ai/releases/download/v2.AI/models.zip -o models.zip
+sha256sum models.zip  # Expect 3cc2115f4ef7cd4f9e43cfcec376bf56ea2a8213cb760ab17b27edbc2cac206c
+unzip -q models.zip -d ./models
+```
+
+`models.zip.sha256` in the repository mirrors the expected hash for quick
+automation-friendly validation.
 
 ### Required ONNX Models (~2.8GB total)
 
@@ -592,6 +622,10 @@ print(f"Output directory: {result['out_dir']}")
 - soundfile ≥0.12 (I/O)
 - resampy ≥0.4.3 (high-quality resampling)
 - pydub ≥0.25 (audio utilities)
+
+> Optional signal libraries are discovered lazily via `importlib.util.find_spec` so
+> the paralinguistics stage can warn and fall back gracefully if librosa, scipy, or
+> Parselmouth are missing at runtime.
 
 **ML/NLP:**
 - CTranslate2 ≥4.2,<5.0 (ASR backend)

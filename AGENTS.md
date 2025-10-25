@@ -232,7 +232,9 @@ References (for maintainers; safe to keep at bottom)
 AGENTS.md concept/spec (repo + site). Agents read this file to learn environment/setup/tests. 
 
 
-Release (models.zip) — tltrogl/diaremot2-ai v2.AI with asset for Codex setup. 
+Release (models.zip) — tltrogl/diaremot2-ai v2.AI with asset for Codex setup.
+Codex Cloud provisioning always fetches `models.zip` from this release; keep it
+current and verify the checksum before promoting new assets.
 
 ONNX Runtime EPs (CPU) — CPU EP is the default; we stay CPU-only. 
 ONNX Runtime
