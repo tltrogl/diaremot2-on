@@ -626,6 +626,8 @@ print(f"Output directory: {result['out_dir']}")
 > Optional signal libraries are discovered lazily via `importlib.util.find_spec` so
 > the paralinguistics stage can warn and fall back gracefully if librosa, scipy, or
 > Parselmouth are missing at runtime.
+> The pipeline explicitly imports `importlib.util` to keep this probe available even
+> in embedded Python builds where attribute access on `importlib` may be limited.
 
 **ML/NLP:**
 - CTranslate2 ≥4.2,<5.0 (ASR backend)
