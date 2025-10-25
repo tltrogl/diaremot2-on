@@ -192,8 +192,9 @@ volumes:
 ### Option C: Download on Startup
 ```dockerfile
 # Add to Dockerfile
-RUN wget https://releases.com/models.zip && \
-    unzip models.zip -d /srv/models
+RUN wget https://github.com/tltrogl/diaremot2-ai/releases/download/v2.AI/models.zip \
+    && echo "3cc2115f4ef7cd4f9e43cfcec376bf56ea2a8213cb760ab17b27edbc2cac206c  models.zip" | sha256sum -c - \
+    && unzip -q models.zip -d /srv/models
 ```
 
 ⚠️ **Recommended**: Option A or B for production
