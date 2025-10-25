@@ -221,6 +221,15 @@ def _resolve_model_dir() -> Path:
     return Path(DEFAULT_MODELS_ROOT)
 
 
+_COMPONENT_ALIASES: dict[tuple[str, ...], tuple[tuple[str, ...], ...]] = {
+    ("text_emotions",): (("goemotions-onnx",),),
+    ("affect", "ser8"): (("ser8-onnx",), ("ser8",)),
+    ("affect", "vad_dim"): (("VAD_dim",), ("vad_dim",)),
+    ("affect", "sed_panns"): (("panns",),),
+    ("intent",): (("bart",),),
+}
+
+
 def _resolve_component_dir(
     cli_value: str | None, env_key: str, *default_subpath: str
 ) -> Path:
@@ -233,6 +242,9 @@ def _resolve_component_dir(
     model_root = _resolve_model_dir()
     if default_subpath:
         candidates.append(model_root.joinpath(*default_subpath))
+        alias_paths = _COMPONENT_ALIASES.get(tuple(default_subpath), ())
+        for alias in alias_paths:
+            candidates.append(model_root.joinpath(*alias))
     else:
         candidates.append(model_root)
 

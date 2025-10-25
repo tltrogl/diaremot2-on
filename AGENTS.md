@@ -236,6 +236,45 @@ Release (models.zip) — tltrogl/diaremot2-ai v2.AI with asset for Codex setup.
 Codex Cloud provisioning always fetches `models.zip` from this release; keep it
 current and verify the checksum before promoting new assets.
 
+### Codex Cloud bootstrap checklist (must pass before promotion)
+
+1. **Fetch models bundle**
+   ```bash
+   curl -L https://github.com/tltrogl/diaremot2-ai/releases/download/v2.AI/models.zip -o models.zip
+   sha256sum --check models.zip.sha256  # expects 3cc2115f4ef7cd4f9e43cfcec376bf56ea2a8213cb760ab17b27edbc2cac206c
+   unzip -q models.zip -d ./models
+   ```
+   The archive expands into the alias-aware layout (`goemotions-onnx/`, `ser8-onnx/`,
+   `panns/`, `bart/`, `ecapa_onnx/`, root `silero_vad.onnx`). The bundle currently
+   omits the dimensional VAD model; the pipeline will emit neutral placeholders unless
+   an `affect/vad_dim/` directory is provided manually from an internal export.
+
+2. **Install the pinned runtime**
+   ```bash
+   pip install -r requirements.txt
+   ```
+   This installs the ONNX-first stack plus `transformers==4.44.2`, `tokenizers==0.19.1`,
+   and all paralinguistics/audio dependencies expected by the smoke test.
+
+3. **Run the CPU smoke test with affect enabled**
+   ```bash
+   PYTHONPATH=src \
+     HF_HOME=./.cache \
+     python -m diaremot.cli smoke \
+       --outdir /tmp/smoke_test \
+       --model-root ./models \
+       --enable-affect
+   ```
+   First run downloads Faster-Whisper tiny.en (CTranslate2) and may contact
+   Hugging Face to hydrate tokenizer metadata for BART if the local JSON bundle
+   fails validation. Subsequent runs stay offline. Treat missing optional VAD as
+   a warning, not a failure, until the upstream release ships the asset.
+
+4. **Verify outputs**
+   Ensure `/tmp/smoke_test/` contains the standard CSV/JSON/HTML/PDF artefacts and
+   that the stage summary reports `PASS` for all 11 stages. Investigate any
+   `issues` recorded by `affect` before shipping.
+
 ONNX Runtime EPs (CPU) — CPU EP is the default; we stay CPU-only. 
 ONNX Runtime
 

@@ -185,6 +185,8 @@ py -3.11 -m venv .venv
 
 # 3. Install dependencies
 python -m pip install -U pip wheel setuptools
+pip install -r requirements.txt
+# Optional (development): keep editable install for local code changes
 pip install -e .
 
 # 5. Verify installation
@@ -216,6 +218,8 @@ source .venv/bin/activate
 
 # 3. Install dependencies
 pip install -U pip wheel setuptools
+pip install -r requirements.txt
+# Optional (development): keep editable install for local code changes
 pip install -e .
 
 # 4. Verify installation
@@ -225,7 +229,8 @@ python -m diaremot.cli diagnostics
 ### Development Setup
 
 ```bash
-# Install with dev dependencies
+# Install runtime + dev dependencies
+pip install -r requirements.txt
 pip install -e ".[dev]"
 
 # Run tests
@@ -308,6 +313,44 @@ unzip -q models.zip -d ./models
 
 `models.zip.sha256` in the repository mirrors the expected hash for quick
 automation-friendly validation.
+
+The archive unpacks into the alias-aware structure expected by the refactored
+affect stack:
+
+```
+models/
+├── bart/                # Intent (BART-MNLI) ONNX + tokenizer JSONs
+├── ecapa_onnx/          # Speaker embeddings
+├── goemotions-onnx/     # Text emotion ONNX bundle
+├── panns/               # Sound event detection
+├── ser8-onnx/           # Speech emotion ONNX bundle
+├── faster-whisper-tiny.en/  # Auto-downloaded on first transcription run
+└── silero_vad.onnx      # Root-level Silero VAD file
+```
+
+> **Note:** The v2.AI release does **not** include the dimensional VAD model
+> (`affect/vad_dim/`). Runs will emit neutral valence/arousal/dominance scores
+> until the directory is populated manually (internal export or Hugging Face
+> conversion). This is treated as a warning during smoke tests.
+
+### Smoke test (Codex Cloud parity)
+
+After installing dependencies and extracting `models.zip`, validate the runtime
+with the full CPU pipeline:
+
+```bash
+PYTHONPATH=src \
+  HF_HOME=./.cache \
+  python -m diaremot.cli smoke \
+    --outdir /tmp/smoke_test \
+    --model-root ./models \
+    --enable-affect
+```
+
+The first execution downloads Faster-Whisper (CTranslate2 tiny.en) and may reach
+Hugging Face to fetch tokenizer metadata for BART. Subsequent runs are fully
+offline. Confirm that all 11 stages report `PASS` and review the `issues`
+section in the final JSON for optional warnings (e.g., missing VAD_dim).
 
 ### Required ONNX Models (~2.8GB total)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import warnings
 from types import ModuleType
 from typing import Final
@@ -11,9 +12,19 @@ from typing import Final
 def _load_optional_module(module_name: str) -> ModuleType | None:
     """Return the imported module when available, otherwise ``None``."""
 
-    if importlib.util.find_spec(module_name) is None:
+    try:
+        spec = importlib.util.find_spec(module_name)
+    except (ImportError, ValueError):  # ValueError when extension modules expose no spec
         return None
-    return importlib.import_module(module_name)
+    if spec is None:
+        return None
+    try:
+        return importlib.import_module(module_name)
+    except Exception:  # pragma: no cover - defensive best-effort import
+        warnings.warn(
+            f"failed to import optional module '{module_name}'", RuntimeWarning, stacklevel=2
+        )
+        return None
 
 
 librosa = _load_optional_module("librosa")  # type: ignore[assignment]
